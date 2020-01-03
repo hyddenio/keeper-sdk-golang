@@ -56,16 +56,16 @@ func (c *LoginCommand) Command() string {
 }
 
 type AccountKeys struct {
-	EncryptionParams string 		`json:"encryption_params"`
-	EncryptedDataKey string			`json:"encrypted_data_key"`
-	EncryptedPrivateKey string 		`json:"encrypted_private_key"`
-	DataKeyBackupDate int64			`json:"data_key_backup_date"`
+	EncryptionParams    string  `json:"encryption_params"`
+	EncryptedDataKey    string  `json:"encrypted_data_key"`
+	EncryptedPrivateKey string  `json:"encrypted_private_key"`
+	DataKeyBackupDate   float64 `json:"data_key_backup_date"`
 }
 
 type PasswordRules struct {
-	Match bool						`json:"match"`
-	Pattern string					`json:"pattern"`
-	Description string				`json:"description"`
+	Match       bool   `json:"match"`
+	Pattern     string `json:"pattern"`
+	Description string `json:"description"`
 }
 
 type AccountEnforcements struct {
@@ -83,9 +83,9 @@ type AccountSettings struct {
 	PasswordRules              []*PasswordRules  `json:"password_rules"`
 	Channel                    string            `json:"channel"`
 	SsoUser                    *bool             `json:"sso_user"`
-	MustPerformAccountShareBy  *int64            `json:"must_perform_account_share_by"`
+	MustPerformAccountShareBy  *float64            `json:"must_perform_account_share_by"`
 	ShareAccountTo             []*AccountShareTo `json:"share_account_to"`
-	MasterPasswordLastModified *int64            `json:"master_password_last_modified"`
+	MasterPasswordLastModified *float64            `json:"master_password_last_modified"`
 	EmailVerified              bool              `json:"email_verified"`
 }
 
@@ -110,7 +110,6 @@ type LoginResponse struct {
 
 type AuthorizedCommand struct {
 	KeeperApiCommand
-	DeviceId string 				`json:"device_id,omitempty"`
 	SessionToken string 			`json:"session_token,omitempty"`
 	Username string					`json:"username,omitempty"`
 }

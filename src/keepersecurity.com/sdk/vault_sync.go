@@ -14,6 +14,7 @@ func syncDown(vault Vault) (result *rebuildTask, err error) {
 	rq := &SyncDownCommand{
 		Revision:   storage.Revision(),
 		Include:    []string{"sfheaders", "sfrecords", "sfusers", "teams", "folders"},
+		DeviceId:   DefaultDeviceName,
 		DeviceName: DefaultDeviceName,
 		ClientTime: time.Now().Unix() * 1000,
 	}
@@ -682,8 +683,10 @@ func (r *SyncDownRecord) Uid() string {
 	return r.RecordUid()
 }
 func (r *SyncDownRecord) AdjustUdata() {
-	if data, err := json.Marshal(r.Udata_); err == nil {
-		r.udata = string(data)
+	if r.Udata_ != nil {
+		if data, err := json.Marshal(r.Udata_); err == nil {
+			r.udata = string(data)
+		}
 	}
 }
 

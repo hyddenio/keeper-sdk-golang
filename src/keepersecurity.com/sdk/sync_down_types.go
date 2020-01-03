@@ -2,10 +2,11 @@ package sdk
 
 type SyncDownCommand struct {
 	AuthorizedCommand
-	Revision int64							`json:"revision"`
-	Include []string						`json:"include,omitempty"`
-	DeviceName string						`json:"device_name,omitempty"`
-	ClientTime	int64						`json:"client_time,omitempty"`
+	Revision   int64    `json:"revision"`
+	Include    []string `json:"include,omitempty"`
+	DeviceId   string   `json:"device_id,omitempty"`
+	DeviceName string   `json:"device_name,omitempty"`
+	ClientTime int64    `json:"client_time,omitempty"`
 }
 func (c *SyncDownCommand) Command() string {
 	return "sync_down"

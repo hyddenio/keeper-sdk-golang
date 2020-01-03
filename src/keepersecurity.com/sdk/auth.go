@@ -49,12 +49,27 @@ func NewAuth(ui AuthUI, settings ISettingsStorage) Auth {
 	if settings == nil {
 		settings = NewSettingsStorage(nil)
 	}
-	return &auth{
+	auth := &auth{
 		ui:              ui,
 		settingsStorage: settings,
 		endpoint:        NewKeeperEndpoint(),
 		context:         new(AuthContext),
 	}
+	sets := settings.GetSettings()
+	if sets.LastServer() != "" {
+		var server = sets.LastServer()
+		var deviceId []byte = nil
+		var keyId int32 = 1
+		sers := sets.GetServerSettings(sets.LastServer())
+		if sers != nil {
+			server = sers.Server()
+			deviceId = sers.DeviceId()
+			keyId = sers.ServerKeyId()
+		}
+		auth.Endpoint().SetServerParams(server, deviceId, keyId)
+	}
+
+	return auth
 }
 
 func (a *auth) Ui() AuthUI {
@@ -193,43 +208,44 @@ func (a *auth) Login(username string, password string) (err error) {
 			a.StoreConfigurationIfChanged(configuration)
 			return
 		} else {
-			switch loginRs.ResultCode {
-			case "need_totp", "invalid_device_token", "invalid_totp":
-				var channel = Other
-				switch loginRs.Channel {
-				case "two_factor_channel_google":
-					channel = Authenticator
-				case "two_factor_channel_duo":
-					channel = DuoSecurity
-				}
+			if a.ui != nil {
+				switch loginRs.ResultCode {
+				case "need_totp", "invalid_device_token", "invalid_totp":
+					var channel = Other
+					switch loginRs.Channel {
+					case "two_factor_channel_google":
+						channel = Authenticator
+					case "two_factor_channel_duo":
+						channel = DuoSecurity
+					}
 
-				tfaCode, duration := a.ui.GetTwoFactorCode(channel)
-				if tfaCode != "" {
-					token = tfaCode
-					tokenType = "one_time"
-					tokenDuration = int32(duration)
-					continue
-				}
-			case "auth_expired":
-				prompt := "Do you want to change your password?"
-				if a.ui.Confirmation(loginRs.Message + "\n\n" + prompt) {
-					params := preLogin.Salt[0]
-					if newPassword, err := a.ChangeMasterPassword(uint32(params.Iterations)); err == nil {
-						preLogin = nil
-						authHash = ""
-						password = newPassword
+					tfaCode, duration := a.ui.GetTwoFactorCode(channel)
+					if tfaCode != "" {
+						token = tfaCode
+						tokenType = "one_time"
+						tokenDuration = int32(duration)
 						continue
 					}
-				}
-			case "auth_expired_transfer":
-				prompt := "Do you accept Account Transfer policy?"
-				if a.ui.Confirmation(loginRs.Message + "\n\n" + prompt) {
-					if a.ShareAccount(a.context.Settings.ShareAccountTo) == nil {
-						continue
+				case "auth_expired":
+					prompt := "Do you want to change your password?"
+					if a.ui.Confirmation(loginRs.Message + "\n\n" + prompt) {
+						params := preLogin.Salt[0]
+						if newPassword, err := a.ChangeMasterPassword(uint32(params.Iterations)); err == nil {
+							preLogin = nil
+							authHash = ""
+							password = newPassword
+							continue
+						}
+					}
+				case "auth_expired_transfer":
+					prompt := "Do you accept Account Transfer policy?"
+					if a.ui.Confirmation(loginRs.Message + "\n\n" + prompt) {
+						if a.ShareAccount(a.context.Settings.ShareAccountTo) == nil {
+							continue
+						}
 					}
 				}
 			}
-
 			return NewKeeperApiError(loginRs.GetKeeperApiResponse())
 		}
 	}
@@ -241,12 +257,14 @@ func (a *auth) Logout() {
 }
 
 func (a *auth) GetPreLogin(username string) (rs *protobuf.PreLoginResponse, err error) {
+	var deviceToken []byte
 	for attempt := 0; attempt < 5; attempt++ {
+		deviceToken, err = a.endpoint.GetDeviceToken()
 		rq := &protobuf.PreLoginRequest{
 			AuthRequest: &protobuf.AuthRequest{
 				ClientVersion:        a.endpoint.ClientVersion(),
 				Username:             strings.ToLower(username),
-				EncryptedDeviceToken: a.endpoint.DeviceToken(),
+				EncryptedDeviceToken: deviceToken,
 			},
 			LoginType: protobuf.LoginType_NORMAL,
 		}
@@ -322,6 +340,7 @@ func (a *auth) StoreConfigurationIfChanged(configuration ISettings) {
 			newServer := NewServerSettings(a.endpoint.Server())
 			newServer.deviceId = a.endpoint.DeviceToken()
 			newServer.serverKeyId = a.endpoint.ServerKeyId()
+			newSettings.MergeServerSettings(newServer)
 		}
 
 		a.settingsStorage.PutSettings(newSettings)

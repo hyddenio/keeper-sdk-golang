@@ -11,12 +11,14 @@ import (
 	"crypto/sha256"
 	"crypto/sha512"
 	"crypto/x509"
+	"errors"
 	"golang.org/x/crypto/pbkdf2"
+	"io"
 )
 
 func GetRandomBytes(size int) []byte {
 	data := make([]byte, size)
-	rand.Read(data)
+	_, _ = rand.Read(data)
 	return data
 }
 
@@ -51,6 +53,9 @@ func DecryptAesV1Full(data []byte, key []byte, usePadding bool) ([]byte, error) 
 	}
 	decrypter := cipher.NewCBCDecrypter(block, data[0:DefaultBlockSize])
 	result := make([]byte, len(data) - DefaultBlockSize)
+	if len(result) % block.BlockSize() != 0 {
+		return nil, errors.New("invalid data to decrypt")
+	}
 	decrypter.CryptBlocks(result, data[DefaultBlockSize:])
 
 	if usePadding {
@@ -76,6 +81,10 @@ func EncryptAesV1Full(data []byte, key []byte, iv []byte, usePadding bool) ([]by
 	if usePadding {
 		data = pkcs7Pad(data)
 	}
+	if len(data) % block.BlockSize() != 0 {
+		return nil, errors.New("unpadded data to encrypt")
+	}
+
 	result := make([]byte, len(data) + DefaultBlockSize)
 	copy(result, iv)
 	encrypter.CryptBlocks(result[DefaultBlockSize:], data)
@@ -168,4 +177,143 @@ func DecryptRsa(data []byte, privateKey crypto.PrivateKey) ([]byte, error) {
 	default:
 		return nil, NewKeeperError("unsupported private key type")
 	}
+}
+
+type StreamCryptor interface {
+	io.Reader
+	GetTotal() int
+}
+func NewAesStreamEncryptor(reader io.Reader, key []byte) StreamCryptor {
+	return newAesStreamCryptor(reader, key, true)
+}
+func NewAesStreamDecryptor(reader io.Reader, key []byte) StreamCryptor {
+	return newAesStreamCryptor(reader, key, false)
+}
+func newAesStreamCryptor(reader io.Reader, key []byte, isEncrypt bool) StreamCryptor {
+	var result = &streamCryptor{
+		isEncrypt: isEncrypt,
+		inner:     reader,
+		innerErr:  nil,
+		key:       key,
+		buffer:    make([]byte, 10240),
+		padding:   make([]byte, 0, DefaultBlockSize),
+		head:      0,
+		tail:      0,
+		total:     0,
+	}
+	return result
+}
+type streamCryptor struct {
+	isEncrypt bool
+	inner     io.Reader
+	innerErr  error
+	key       []byte
+	buffer    []byte
+	padding   []byte
+	head      int
+	tail      int
+	total     int
+	crypter   cipher.BlockMode
+}
+
+func (e *streamCryptor) GetTotal() int {
+	return e.total
+}
+
+func (e *streamCryptor) Read(result []byte) (read int, err error) {
+	if len(result) < DefaultBlockSize {
+		err = errors.New("buffer is too small")
+		return
+	}
+
+	read = 0
+	err = nil
+	var avail int
+	for len(result) - read > DefaultBlockSize {
+		if (e.tail - e.head) == 0 {
+			e.tail = 0
+			e.head = 0
+			if e.innerErr == nil {
+				if len(e.padding) > 0 {
+					e.tail = len(e.padding)
+					copy(e.buffer, e.padding)
+					e.padding = e.padding[:0]
+				}
+				var innerRead int
+				innerRead, e.innerErr = e.inner.Read(e.buffer[e.tail:])
+				if innerRead > 0 {
+					e.tail += innerRead
+					e.total += innerRead
+				}
+				bLen := e.tail - e.head
+				if bLen > 0 {
+					rem := bLen % DefaultBlockSize
+					if rem == 0 {
+						rem = DefaultBlockSize
+					}
+					e.padding = append(e.padding, e.buffer[e.tail-rem:e.tail]...)
+					e.tail -= rem
+				}
+			}
+		}
+
+		if e.crypter == nil {
+			var block cipher.Block
+			if block, err = aes.NewCipher(e.key); err != nil {
+				return
+			}
+			if e.isEncrypt {
+				iv := GetRandomBytes(DefaultBlockSize)
+				e.crypter = cipher.NewCBCEncrypter(block, iv)
+				copy(result, iv)
+				read += len(iv)
+			} else {
+				e.crypter = cipher.NewCBCDecrypter(block, e.buffer[:DefaultBlockSize])
+				e.head += DefaultBlockSize
+			}
+			continue
+		}
+
+		fits := len(result) - read
+		fits -= fits % DefaultBlockSize
+		avail = e.tail - e.head
+		if avail > 0 {  // whole blocks
+			toEncrypt := fits
+			if avail < fits {
+				toEncrypt = avail
+			}
+			e.crypter.CryptBlocks(result[read:read+toEncrypt], e.buffer[e.head:e.head+toEncrypt])
+			read += toEncrypt
+			e.head += toEncrypt
+			continue
+		} else if len(e.padding) > 0 && e.innerErr != nil {
+			var unpadded []byte
+			if e.isEncrypt {
+				unpadded = pkcs7Pad(e.padding)
+				e.padding = e.padding[:0]
+				copy(e.buffer, unpadded)
+				e.head = 0
+				e.tail = len(unpadded)
+				continue
+			} else {
+				copy(e.buffer, e.padding)
+				e.head = 0
+				e.tail = len(e.padding)
+				e.crypter.CryptBlocks(e.padding, e.buffer[:e.tail])
+				e.tail = 0
+				unpadded = pkcs7Unpad(e.padding)
+				e.padding = e.padding[:0]
+				if len(unpadded) > 0 {
+					copy(result[read:], unpadded)
+					read += len(unpadded)
+				}
+			}
+		}
+		break
+	}
+	avail = e.tail - e.head
+	if e.innerErr != nil && avail == 0 {
+		err = e.innerErr
+	}
+	return
 }

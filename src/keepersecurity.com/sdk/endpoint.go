@@ -219,8 +219,10 @@ func (endpoint *keeperEndpoint) ExecuteV2Command(rq interface{}, rs interface{})
 			}
 		}
 	}
-	if rqBody, err := json.Marshal(rq); err == nil {
-		if rsBody, err := endpoint.ExecuteRest("vault/execute_v2_command", rqBody); err == nil {
+	var rqBody []byte
+	if rqBody, err = json.Marshal(rq); err == nil {
+		var rsBody []byte
+		if rsBody, err = endpoint.ExecuteRest("vault/execute_v2_command", rqBody); err == nil {
 			err = json.Unmarshal(rsBody, rs)
 		}
 	}

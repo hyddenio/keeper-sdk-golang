@@ -1,19 +1,26 @@
 package sdk
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"github.com/golang/glog"
+	"io"
+	"mime/multipart"
+	"net/http"
 	"time"
 )
 
 type Vault interface {
 	VaultData
 	Auth
-	SyncDown() chan bool
+	SyncDown() error
+	SyncDownAsync() chan error
 	ResolveRecordAccessPath(path *RecordAccessPath, forEdit bool, forShare bool) bool
 	AddRecord(record *PasswordRecord, folderUid string) error
 	PutRecord(record *PasswordRecord, skipData bool, skipExtra bool) error
 	DeleteRecord(recordUid string, folderUid string, force bool) error
+	UploadAttachment(fileName string, fileBody io.Reader) (*AttachmentFile, error)
 }
 
 type RecordAccessPath struct {
@@ -27,32 +34,33 @@ type vault struct {
 	Auth
 }
 
-func NewVault(auth Auth, settings VaultStorage) Vault {
-	if settings == nil {
-		settings = NewInMemoryVaultStorage()
+func NewVault(auth Auth, storage VaultStorage) Vault {
+	if storage == nil {
+		storage = NewInMemoryVaultStorage()
 	}
 
 	return &vault{
 		Auth: auth,
-		VaultData: NewVaultData(auth.AuthContext().ClientKey, settings),
+		VaultData: NewVaultData(auth.AuthContext().ClientKey, storage),
 	}
 }
 
-func (v *vault) syncDown(whenDone chan bool) {
-	var err error
-	defer (func() { whenDone <- err == nil })()
-
+func (v *vault) SyncDown() (err error) {
 	var toRebuild *rebuildTask
 	if toRebuild, err = syncDown(v); err == nil {
 		v.rebuildData(toRebuild)
 	} else {
 		glog.V(1).Info("Sync Down error: ", err)
 	}
+	return
 }
 
-func (v *vault) SyncDown() chan bool {
-	f := make(chan bool)
-	go v.syncDown(f)
+func (v *vault) SyncDownAsync() chan error {
+	f := make(chan error)
+	go func() {
+		f <- v.SyncDown()
+		close(f)
+	}()
 	return f
 }
 
@@ -124,7 +132,7 @@ func (v *vault) AddRecord(record *PasswordRecord, folderUid string) (err error) 
 		}
 		var data []byte
 		var extra []byte
-		var udata []byte
+		var udata map[string]interface{}
 		if data, extra, udata, err = record.Serialize(nil); err == nil {
 			if data != nil {
 				if data, err = EncryptAesV1(data, v.AuthContext().DataKey); err == nil {
@@ -141,7 +149,7 @@ func (v *vault) AddRecord(record *PasswordRecord, folderUid string) (err error) 
 				}
 			}
 			if udata != nil {
-				command.Udata = string(udata)
+				command.Udata = udata
 			}
 			err = v.ExecuteAuthCommand(command, new(KeeperApiResponse), true)
 		}
@@ -169,7 +177,7 @@ func (v *vault) PutRecord(record *PasswordRecord, skipData bool, skipExtra bool)
 		TeamUid:            path.TeamUid,
 		Version:            2,
 		Revision:           storageRecord.Revision(),
-		ClientModifiedTime: time.Now().Unix() * 1000,
+		ClientModifiedTime: float64(time.Now().Unix() * 1000),
 	}
 	if rk := v.VaultStorage().RecordKeys().GetLink(record.RecordUid, v.VaultStorage().PersonalScopeUid()); rk != nil {
 		if rk.KeyType() != 1 {
@@ -184,7 +192,7 @@ func (v *vault) PutRecord(record *PasswordRecord, skipData bool, skipExtra bool)
 	if !skipData || !skipExtra {
 		var data []byte
 		var extra []byte
-		var udata []byte
+		var udata map[string]interface{}
 		data, extra, udata, err = record.Serialize(storageRecord)
 		if err != nil {
 			return
@@ -202,14 +210,15 @@ func (v *vault) PutRecord(record *PasswordRecord, skipData bool, skipExtra bool)
 			}
 			recordObject.Extra = Base64UrlEncode(extra)
 			if udata != nil {
-				recordObject.Udata = string(udata)
+				recordObject.Udata = udata
 			}
 		}
 	}
 
 	var command = &RecordUpdateCommand{
 		Pt:            DefaultDeviceName,
-		ClientTime:    time.Now().Unix() * 1000,
+		DeviceId:      DefaultDeviceName,
+		ClientTime:    float64(time.Now().Second() * 1000),
 		UpdateRecords: []*RecordObject{recordObject},
 	}
 	var rs = new(RecordUpdateResponse)
@@ -255,7 +264,7 @@ func (v *vault) DeleteRecord(recordUid string, folderUid string, force bool) (er
 		}
 		command := &RecordUpdateCommand{
 			Pt:         DefaultDeviceName,
-			ClientTime: time.Now().Unix() * 1000,
+			ClientTime: float64(time.Now().Unix() * 1000),
 		}
 		if record.Owner() {
 			command.DeleteRecords = []string{record.RecordUid}
@@ -284,6 +293,111 @@ func (v *vault) DeleteRecord(recordUid string, folderUid string, force bool) (er
 		}
 	} else {
 
+	}
+	return
+}
+
+type uploadMultipartReader struct {
+	err             error
+	fileParameter   string
+	fileName        string
+	fileReader      StreamCryptor
+	fileWriter      io.Writer
+	multipartWriter *multipart.Writer
+	buffer          *bytes.Buffer
+}
+
+func (mp *uploadMultipartReader) Read(result []byte) (read int, err error) {
+	read = 0
+	err = nil
+	var fits int
+	for fits = len(result) - read; fits > 0; fits = len(result) - read {
+		avail := mp.buffer.Len()
+		if avail > 0 {
+			toSend := fits
+			if avail < toSend {
+				toSend = avail
+			}
+			var n int
+			n, err = mp.buffer.Read(result[read:])
+			read += n
+		} else {
+			if mp.fileWriter == nil {
+				mp.fileWriter, mp.err = mp.multipartWriter.CreateFormFile(mp.fileParameter, mp.fileName)
+			}
+			if mp.err == nil {
+				var toRead = int64(mp.buffer.Cap() - mp.buffer.Len())
+				var written int64
+				written, mp.err = io.CopyN(mp.fileWriter, mp.fileReader, toRead)
+				if mp.err != nil {
+					_ = mp.multipartWriter.Close()
+				}
+				if written == 0 {
+					break
+				}
+			} else {
+				break
+			}
+		}
+	}
+
+	if mp.buffer.Len() == 0 && mp.err != nil {
+		err = mp.err
+	}
+
+	return
+}
+
+func (v *vault) UploadAttachment(fileName string, fileBody io.Reader) (result *AttachmentFile, err error) {
+	rq := &RequestUploadCommand{
+		FileCount:      1,
+		ThumbnailCount: 0,
+	}
+	rs := new(RequestUploadResponse)
+	if err = v.Auth.ExecuteAuthCommand(rq, rs, true); err != nil {
+		return
+	}
+
+	upload := rs.FileUploads[0]
+	var af = &AttachmentFile{
+		Id:   upload.FileId,
+		Name: fileName,
+		Size: 0,
+		Key:  GenerateAesKey(),
+	}
+
+	uploader := new(uploadMultipartReader)
+	uploader.err = nil
+	encryptor := NewAesStreamEncryptor(fileBody, af.Key)
+	uploader.fileReader = encryptor
+	uploader.buffer = bytes.NewBuffer(make([]byte, 0, 10240))
+	uploader.multipartWriter = multipart.NewWriter(uploader.buffer)
+	if len(upload.Parameters) > 0 {
+		for k, v := range upload.Parameters {
+			if s, ok := v.(string); ok {
+				_ = uploader.multipartWriter.WriteField(k, s)
+			}
+		}
+	}
+	uploader.fileParameter = upload.FileParameter
+	uploader.fileName = upload.FileId
+
+	var httpRq *http.Request
+	if httpRq, err = http.NewRequest("POST", upload.Url, uploader); err == nil {
+		httpRq.Header.Set("Content-Type", uploader.multipartWriter.FormDataContentType())
+		client := http.DefaultClient
+		var httpRs *http.Response
+		if httpRs, err = client.Do(httpRq); err == nil {
+			if httpRs.StatusCode == upload.SuccessStatusCode {
+				af.Size = int32(encryptor.GetTotal())
+			} else {
+				err = errors.New(fmt.Sprintf("upload HTTP status code: %d, expected: %d", httpRs.StatusCode, upload.SuccessStatusCode))
+			}
+		}
+	}
+
+	if err == nil {
+		result = af
 	}
 	return
 }

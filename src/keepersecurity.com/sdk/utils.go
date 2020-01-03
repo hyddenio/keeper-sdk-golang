@@ -7,6 +7,9 @@ import (
 )
 
 func Base64UrlEncode(data []byte) string {
+	if data == nil {
+		return ""
+	}
 	outLen := base64.URLEncoding.EncodedLen(len(data))
 	result := make([]byte, outLen)
 	base64.URLEncoding.Encode(result, data)
@@ -19,6 +22,9 @@ func Base64UrlEncode(data []byte) string {
 }
 
 func Base64UrlDecode(text string) []byte {
+	if text == "" {
+		return nil
+	}
 	switch len(text) % 4 {
 	case 0:
 		break
@@ -95,7 +101,7 @@ func CreateAuthVerifier(password string, salt []byte, iterations uint32) string 
 	binary.BigEndian.PutUint32(data[:4], uint32(iterations))
 	data[0] = 1
 	copy(data[4:20], salt)
-	key := DeriveKeyHashV1(password, salt, iterations)
+	key := DeriveKeyV1(password, salt, iterations)
 	copy(data[20:], key)
 	return Base64UrlEncode(data)
 }

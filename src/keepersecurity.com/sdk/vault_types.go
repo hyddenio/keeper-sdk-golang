@@ -175,7 +175,7 @@ func NewPasswordRecordFromStorage(sr StorageRecord, key []byte) (record *Passwor
 	}
 	return
 }
-func (p *PasswordRecord) Serialize(storage StorageRecord) (data []byte, extra []byte, udata []byte, err error) {
+func (p *PasswordRecord) Serialize(storage StorageRecord) (data []byte, extra []byte, udata map[string]interface{}, err error) {
 	rData := & recordData{
 		Title:   p.Title,
 		Secret1: p.Login,
@@ -260,12 +260,18 @@ func (p *PasswordRecord) Serialize(storage StorageRecord) (data []byte, extra []
 		extra = nil
 	}
 
-	udataMap := make(map[string]interface{})
 	if storage != nil && storage.UData() != "" {
-		_ = json.Unmarshal([]byte(storage.UData()), &udataMap)
-		delete(udataMap, "files")
+		udata = make(map[string]interface{})
+		if err1 := json.Unmarshal([]byte(storage.UData()), &udata); err1 == nil {
+			if udata != nil {
+				delete(udata, "file_ids")
+			}
+		}
 	}
-	if p.Attachments != nil {
+	if len(p.Attachments) > 0 {
+		if udata == nil {
+			udata = make(map[string]interface{})
+		}
 		files := make([]string, 0)
 		for _, atta := range p.Attachments {
 			files = append(files, atta.Id)
@@ -275,14 +281,8 @@ func (p *PasswordRecord) Serialize(storage StorageRecord) (data []byte, extra []
 				}
 			}
 		}
-		udataMap["files"] = files
+		udata["file_ids"] = files
 	}
-	if len(udataMap) > 0 {
-		udata, _ = json.Marshal(&udataMap)
-	} else {
-		udata = nil
-	}
-
 	return
 }
 

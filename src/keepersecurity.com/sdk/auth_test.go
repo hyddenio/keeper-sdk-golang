@@ -9,8 +9,7 @@ import (
 	"fmt"
 	"github.com/golang/protobuf/proto"
 	"gotest.tools/assert"
-	protobuf2 "keepersecurity.com/sdk/protobuf"
-	"sdk/protobuf"
+	"keepersecurity.com/sdk/protobuf"
 	"strings"
 	"testing"
 )
@@ -235,12 +234,12 @@ func (am *endpointMock) ExecuteRest(endpoint string, command []byte) ([]byte, er
 	case "authentication/pre_login":
 		rs := &protobuf.PreLoginResponse{
 			Status: 0,
-			protobuf2.Salt: []*protobuf.Salt{{
-				Iterations:     int32(am.context.authIterations),
-				protobuf2.Salt: am.context.authSalt,
-				Algorithm:      1,
-				Uid:            []byte("uid"),
-				Name:           "name",
+			Salt: []*protobuf.Salt{{
+				Iterations: int32(am.context.authIterations),
+				Salt:       am.context.authSalt,
+				Algorithm:  1,
+				Uid:        []byte("uid"),
+				Name:       "name",
 			}},
 			TwoFactorChannel: nil,
 		}

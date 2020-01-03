@@ -120,6 +120,50 @@ func TestLocalRsa(t *testing.T) {
 	assert.Assert(t, bytes.Equal(decData, data), "Incorrect RSA encryption")
 }
 
+func TestStreamEncrypt(t *testing.T) {
+	key := GenerateAesKey()
+
+	data := GetRandomBytes(100)
+	buf := bytes.NewBuffer(data)
+	encryptor := NewAesStreamEncryptor(buf, key)
+	buf1 := new(bytes.Buffer)
+	var err error = nil
+	var res int
+	buf2 := make([]byte, 49)
+	for err == nil {
+		res, err = encryptor.Read(buf2)
+		if res > 0 {
+			_, _ = buf1.Write(buf2[0:res])
+		} else {
+			break
+		}
+	}
+	decData, err := DecryptAesV1(buf1.Bytes(), key)
+	assert.Assert(t, bytes.Equal(decData, data), "Incorrect stream encryption")
+}
+
+func TestStreamDecrypt(t *testing.T) {
+	key := GenerateAesKey()
+
+	data := GetRandomBytes(100)
+	encData, err := EncryptAesV1(data, key)
+
+	buf := bytes.NewBuffer(encData)
+	decryptor := NewAesStreamDecryptor(buf, key)
+	buf1 := new(bytes.Buffer)
+	var res int
+	buf2 := make([]byte, 49)
+	for err == nil {
+		res, err = decryptor.Read(buf2)
+		if res > 0 {
+			_, _ = buf1.Write(buf2[0:res])
+		} else {
+			break
+		}
+	}
+	assert.Assert(t, bytes.Equal(buf1.Bytes(), data), "Incorrect stream encryption")
+}
+
 const testPublicKey = "MIIBCgKCAQEAqR0AjmBXo371pYmvS1NM8nXlbAv5qUbPYuV6KVwKjN3T8WX5K6HD" +
 	"Gl3-ylAbI02vIzKue-gDbjo1wUGp2qhANc1VxllLSWnkJmwbuGUTEWp4ANjusoMh" +
 	"PvEwna1XPdlrSMdsKokjbP9xbguPdvXx5oBaqArrrGEg-36Vi7miA_g_UT4DKcry" +

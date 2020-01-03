@@ -12,7 +12,7 @@ import (
 
 func TestVault_SyncDown(t *testing.T) {
 	vault, _ := newTestVault()
-	_ = <-vault.SyncDown()
+	_ = vault.SyncDown()
 	assert.Assert(t, vault.RecordCount() == 3)
 	assert.Assert(t, vault.SharedFolderCount() == 1)
 	assert.Assert(t, vault.TeamCount() == 1)
@@ -20,7 +20,7 @@ func TestVault_SyncDown(t *testing.T) {
 
 func TestVault_SyncDownRemoveOwnedRecord(t *testing.T) {
 	vault, mock := newTestVault()
-	_ = <-vault.SyncDown()
+	_ = vault.SyncDown()
 	recordsBefore := vault.RecordCount()
 	toRemove := make([]string, 0)
 	vault.VaultStorage().Records().Enumerate(func(sr StorageRecord) bool {
@@ -38,7 +38,7 @@ func TestVault_SyncDownRemoveOwnedRecord(t *testing.T) {
 		Revision:       revision,
 		RemovedRecords: toRemove,
 	}
-	_ = <-vault.SyncDown()
+	_ = vault.SyncDown()
 
 	assert.Assert(t, vault.RecordCount() == recordsBefore-len(toRemove))
 	assert.Assert(t, vault.SharedFolderCount() == 1)
@@ -48,7 +48,7 @@ func TestVault_SyncDownRemoveOwnedRecord(t *testing.T) {
 
 func TestVault_SyncDownRemoveTeam(t *testing.T) {
 	vault, mock := newTestVault()
-	_ = <-vault.SyncDown()
+	_ = vault.SyncDown()
 
 	recordsBefore := vault.RecordCount()
 	sharedFoldersBefore := vault.SharedFolderCount()
@@ -68,7 +68,7 @@ func TestVault_SyncDownRemoveTeam(t *testing.T) {
 		Revision:     revision,
 		RemovedTeams: toRemove,
 	}
-	_ = <-vault.SyncDown()
+	_ = vault.SyncDown()
 
 	assert.Assert(t, vault.RecordCount() == recordsBefore)
 	assert.Assert(t, vault.SharedFolderCount() == sharedFoldersBefore)
@@ -77,7 +77,7 @@ func TestVault_SyncDownRemoveTeam(t *testing.T) {
 
 func TestVault_SyncDownRemoveSharedFolderThenTeam(t *testing.T) {
 	vault, mock := newTestVault()
-	_ = <-vault.SyncDown()
+	_ = vault.SyncDown()
 
 	recordsBefore := vault.RecordCount()
 	sharedFoldersBefore := vault.SharedFolderCount()
@@ -98,7 +98,7 @@ func TestVault_SyncDownRemoveSharedFolderThenTeam(t *testing.T) {
 		Revision:     revision,
 		RemovedSharedFolders: toRemove,
 	}
-	_ = <-vault.SyncDown()
+	_ = vault.SyncDown()
 	assert.Assert(t, vault.RecordCount() == recordsBefore)
 	assert.Assert(t, vault.SharedFolderCount() == sharedFoldersBefore)
 	assert.Assert(t, vault.TeamCount() == teamsBefore)
@@ -123,7 +123,7 @@ func TestVault_SyncDownRemoveSharedFolderThenTeam(t *testing.T) {
 		Revision:     revision,
 		RemovedTeams: toRemove,
 	}
-	_ = <-vault.SyncDown()
+	_ = vault.SyncDown()
 
 	assert.Assert(t, vault.RecordCount() == 2)
 	assert.Assert(t, vault.SharedFolderCount() == 0)
@@ -132,7 +132,7 @@ func TestVault_SyncDownRemoveSharedFolderThenTeam(t *testing.T) {
 
 func TestVault_SyncDownRemoveSharedFolderAndTeam(t *testing.T) {
 	vault, mock := newTestVault()
-	_ = <-vault.SyncDown()
+	_ = vault.SyncDown()
 
 	sfToRemove := make([]string, 0)
 	vault.GetAllSharedFolders(func(sf *SharedFolder) bool {
@@ -156,7 +156,7 @@ func TestVault_SyncDownRemoveSharedFolderAndTeam(t *testing.T) {
 		RemovedSharedFolders: sfToRemove,
 		RemovedTeams:         teamToRemove,
 	}
-	_ = <-vault.SyncDown()
+	_ = vault.SyncDown()
 	assert.Assert(t, vault.RecordCount() == 2)
 	assert.Assert(t, vault.SharedFolderCount() == 0)
 	assert.Assert(t, vault.TeamCount() == 0)
@@ -392,8 +392,7 @@ func registerRecord(record *PasswordRecord, keyType int32) (sdr *SyncDownRecord,
 			}
 		}
 		if udata != nil {
-			sdr.Udata_ = make(map[string]interface{})
-			_ = json.Unmarshal(udata, &sdr.Udata_)
+			sdr.Udata_ = udata
 		}
 
 		if keyType == 1 || keyType == 2 {

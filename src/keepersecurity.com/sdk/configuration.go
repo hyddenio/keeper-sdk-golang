@@ -1,6 +1,7 @@
 package sdk
 
 import (
+	"bytes"
 	"encoding/json"
 	"github.com/golang/glog"
 	"io/ioutil"
@@ -309,6 +310,11 @@ func NewJsonSettingsStorage(filename string) *JsonSettingsStorage {
 			}
 		}
 	}
+	if path.IsAbs(filename) {
+		result.filename = filename
+		return result
+	}
+
 	settingsFilePath, err := os.UserHomeDir()
 	if err != nil {
 		result.filename = filename
@@ -333,7 +339,7 @@ func (storage *JsonSettingsStorage) GetSettings() ISettings {
 			var data map[string]interface{}
 			err = json.Unmarshal(jdata, &data)
 			var s string
-			var i int
+			var f float64
 			var ar []interface{}
 			var obj map[string]interface{}
 			if err == nil {
@@ -390,8 +396,8 @@ func (storage *JsonSettingsStorage) GetSettings() ISettings {
 										}
 									}
 									if val, ok = obj["server_key_id"]; ok {
-										if i, ok = val.(int); ok {
-											server.serverKeyId = int32(i)
+										if f, ok = val.(float64); ok {
+											server.serverKeyId = int32(f)
 										} else {
 											glog.Warningf("JSON settings. Integer expected. Got %v", val)
 										}
@@ -433,40 +439,40 @@ func (storage *JsonSettingsStorage) PutSettings(settings ISettings) {
 		data = make(map[string]interface{})
 	}
 	var s string
-	var val interface{}
-	var ok bool
 	if s = settings.LastUsername(); s != "" {
 		data["last_login"] = s
 	}
 	if s = settings.LastServer(); s != "" {
 		data["last_server"] = s
 	}
-	var list []map[string]interface{}
-	if val, ok = data["users"]; ok {
-		if list, ok = val.([]map[string]interface{}); !ok {
-			list = make([]map[string]interface{}, 0)
-			data["users"] = list
-		}
-	} else {
-		list = make([]map[string]interface{}, 0)
-		data["users"] = list
-	}
+
+	var arr []interface{}
+	var entry map[string]interface{}
+	var val interface{}
+	var ok bool
+
+	list := make([]map[string]interface{}, 0)
 	cache := make(map[string]map[string]interface{})
-	for _, val = range list {
-		if entry, ok := val.(map[string]interface{}); ok {
-			if val, ok = entry["user"]; ok {
-				if s, ok = val.(string); ok {
-					cache[AdjustUsername(s)] = entry
+	if val, ok = data["users"]; ok {
+		if arr, ok = val.([]interface{}); ok {
+			for _, val = range arr {
+				if entry, ok = val.(map[string]interface{}); ok {
+					if val, ok = entry["user"]; ok {
+						if s, ok = val.(string); ok {
+							cache[AdjustUsername(s)] = entry
+							list = append(list, entry)
+						}
+					}
 				}
 			}
 		}
 	}
+
 	settings.Users(func (user IUserSettings) bool {
 		if _, ok := user.(IUserSettings); ok {
 			s := AdjustUsername(user.Username())
-			var entry map[string]interface{}
 			if entry, ok = cache[s]; !ok {
-				entry = make( map[string]interface{})
+				entry = make(map[string]interface{})
 				entry["user"] = s
 				cache[s] = entry
 				list = append(list, entry)
@@ -477,22 +483,20 @@ func (storage *JsonSettingsStorage) PutSettings(settings ISettings) {
 		}
 		return true
 	})
+	data["users"] = list
 
-	if val, ok = data["servers"]; ok {
-		if list, ok = val.([]map[string]interface{}); !ok {
-			list = make([]map[string]interface{}, 0)
-			data["servers"] = list
-		}
-	} else {
-		list = make([]map[string]interface{}, 0)
-		data["servers"] = list
-	}
+	list = make([]map[string]interface{}, 0)
 	cache = make(map[string]map[string]interface{})
-	for _, val = range list {
-		if entry, ok := val.(map[string]interface{}); ok {
-			if val, ok = entry["server"]; ok {
-				if s, ok = val.(string); ok {
-					cache[AdjustServername(s)] = entry
+	if val, ok = data["servers"]; ok {
+		if arr, ok = val.([]interface{}); ok {
+			for _, val = range arr {
+				if entry, ok = val.(map[string]interface{}); ok {
+					if val, ok = entry["server"]; ok {
+						if s, ok = val.(string); ok {
+							cache[AdjustServername(s)] = entry
+							list = append(list, entry)
+						}
+					}
 				}
 			}
 		}
@@ -514,10 +518,15 @@ func (storage *JsonSettingsStorage) PutSettings(settings ISettings) {
 		}
 		return true
 	})
+	data["servers"] = list
 
-	jdata, err := json.MarshalIndent(data, "", "  ")
+	buf := new(bytes.Buffer)
+	enc := json.NewEncoder(buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	err = enc.Encode(data)
 	if err == nil {
-		err = ioutil.WriteFile(storage.filename, jdata, 0644)
+		err = ioutil.WriteFile(storage.filename, buf.Bytes(), 0755)
 		if err != nil {
 			glog.Warningln("Write JSON settings to file error.", err)
 		}
