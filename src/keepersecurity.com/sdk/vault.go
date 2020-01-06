@@ -20,7 +20,8 @@ type Vault interface {
 	AddRecord(record *PasswordRecord, folderUid string) error
 	PutRecord(record *PasswordRecord, skipData bool, skipExtra bool) error
 	DeleteRecord(recordUid string, folderUid string, force bool) error
-	UploadAttachment(fileName string, fileBody io.Reader) (*AttachmentFile, error)
+	UploadAttachment(fileBody io.Reader) (*AttachmentFile, error)
+	DownloadAttachment(record *PasswordRecord, attachmentId string, fileBody io.Writer) error
 }
 
 type RecordAccessPath struct {
@@ -218,7 +219,7 @@ func (v *vault) PutRecord(record *PasswordRecord, skipData bool, skipExtra bool)
 	var command = &RecordUpdateCommand{
 		Pt:            DefaultDeviceName,
 		DeviceId:      DefaultDeviceName,
-		ClientTime:    float64(time.Now().Second() * 1000),
+		ClientTime:    float64(time.Now().Unix() * 1000),
 		UpdateRecords: []*RecordObject{recordObject},
 	}
 	var rs = new(RecordUpdateResponse)
@@ -348,7 +349,7 @@ func (mp *uploadMultipartReader) Read(result []byte) (read int, err error) {
 	return
 }
 
-func (v *vault) UploadAttachment(fileName string, fileBody io.Reader) (result *AttachmentFile, err error) {
+func (v *vault) UploadAttachment(fileBody io.Reader) (result *AttachmentFile, err error) {
 	rq := &RequestUploadCommand{
 		FileCount:      1,
 		ThumbnailCount: 0,
@@ -361,7 +362,6 @@ func (v *vault) UploadAttachment(fileName string, fileBody io.Reader) (result *A
 	upload := rs.FileUploads[0]
 	var af = &AttachmentFile{
 		Id:   upload.FileId,
-		Name: fileName,
 		Size: 0,
 		Key:  GenerateAesKey(),
 	}
@@ -393,11 +393,86 @@ func (v *vault) UploadAttachment(fileName string, fileBody io.Reader) (result *A
 			} else {
 				err = errors.New(fmt.Sprintf("upload HTTP status code: %d, expected: %d", httpRs.StatusCode, upload.SuccessStatusCode))
 			}
+			_ = httpRs.Body.Close()
 		}
 	}
 
 	if err == nil {
 		result = af
+	}
+	return
+}
+
+func (v *vault) DownloadAttachment(record *PasswordRecord, attachment string, fileBody io.Writer) (err error) {
+	var attachmentId string
+	var key []byte
+	for _, atta := range record.Attachments {
+		if atta.Id == attachment {
+			attachmentId = atta.Id
+			key = atta.Key
+			break
+		}
+		for _, th := range atta.Thumbnails {
+			if th.Id == attachment {
+				attachmentId = th.Id
+				key = atta.Key
+				break
+			}
+		}
+		if attachmentId != "" {
+			break
+		}
+	}
+	if attachmentId == "" {
+		for _, atta := range record.Attachments {
+			if atta.Name == attachment || atta.Title == attachment {
+				attachmentId = atta.Id
+				key = atta.Key
+				break
+			}
+		}
+	}
+	if attachmentId == "" {
+		err = errors.New("file attachment not found")
+		return
+	}
+
+	path := &RecordAccessPath{
+		RecordUid: record.RecordUid,
+	}
+	if !v.ResolveRecordAccessPath(path, false, false) {
+		err = NewKeeperError(fmt.Sprint("not enough permissions to read record: ", record.RecordUid))
+		return
+	}
+
+	rq := &RequestDownloadCommand{
+		RecordUid:       path.RecordUid,
+		SharedFolderUid: path.SharedFolderUid,
+		TeamUid:         path.TeamUid,
+		FileIds:         []string{attachmentId},
+	}
+	rs := new(RequestDownloadResponse)
+	if err = v.Auth.ExecuteAuthCommand(rq, rs, true); err != nil {
+		return
+	}
+	if len(rs.Downloads) != 1 {
+		err = errors.New("invalid response")
+		return
+	}
+	download := rs.Downloads[0]
+	var httpRq *http.Request
+	if httpRq, err = http.NewRequest("GET", download.Url, nil); err == nil {
+		client := http.DefaultClient
+		var httpRs *http.Response
+		if httpRs, err = client.Do(httpRq); err == nil {
+			if httpRs.StatusCode == 200 {
+				decryptor := NewAesStreamDecryptor(httpRs.Body, key)
+				_, err = io.Copy(fileBody, decryptor)
+			} else {
+				err = errors.New(fmt.Sprint("download attachment http error: ", httpRs.StatusCode))
+			}
+			_ = httpRs.Body.Close()
+		}
 	}
 	return
 }

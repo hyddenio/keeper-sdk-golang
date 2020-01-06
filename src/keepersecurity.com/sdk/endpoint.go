@@ -72,7 +72,7 @@ func (endpoint *keeperEndpoint)	InvalidateDeviceToken() {
 	endpoint.deviceToken = nil
 }
 
-func (endpoint *keeperEndpoint) ExecuteRest(path string, payload []byte) ([]byte, error) {
+func (endpoint *keeperEndpoint) ExecuteRest(path string, payload []byte) (response []byte, err error) {
 	if endpoint.transmissionKey == nil {
 		endpoint.transmissionKey = GetRandomBytes(32)
 	}
@@ -90,75 +90,78 @@ func (endpoint *keeperEndpoint) ExecuteRest(path string, payload []byte) ([]byte
 	apiPayload := &protobuf.ApiRequestPayload{
 		Payload: payload,
 	}
-	rqPayload, err := proto.Marshal(apiPayload)
-	if err != nil {
-		return nil, err
+	var rqPayload []byte
+	if rqPayload, err = proto.Marshal(apiPayload); err != nil {
+		return
 	}
+
 	client := http.DefaultClient
 	for attempt := 0; attempt < 3; attempt++ {
-		encPayload, err := EncryptAesV2(rqPayload, endpoint.transmissionKey)
-		if err != nil {
-			return nil, err
+		var encPayload []byte
+		if encPayload, err = EncryptAesV2(rqPayload, endpoint.transmissionKey); err != nil {
+			return
 		}
+
 		var pubKey crypto.PublicKey
 		var ok bool
 		if pubKey, ok = serverPublicKeys[endpoint.serverKeyId]; !ok {
 			endpoint.serverKeyId = 1
 			pubKey, ok = serverPublicKeys[endpoint.serverKeyId]
 		}
-		encKey, err := EncryptRsa(endpoint.transmissionKey, pubKey)
-		apiRequest := &protobuf.ApiRequest{
+		var encKey []byte
+		if encKey, err = EncryptRsa(endpoint.transmissionKey, pubKey); err != nil {
+			return
+		}
+		var apiRequest = &protobuf.ApiRequest{
 			EncryptedTransmissionKey: encKey,
-			PublicKeyId: int32(endpoint.serverKeyId),
-			Locale: endpoint.locale,
-			EncryptedPayload: encPayload,
+			PublicKeyId:              int32(endpoint.serverKeyId),
+			Locale:                   endpoint.locale,
+			EncryptedPayload:         encPayload,
 		}
-		rqBody, err := proto.Marshal(apiRequest)
-		if err != nil {
-			return nil, err
+		var rqBody []byte
+		if rqBody, err = proto.Marshal(apiRequest); err != nil {
+			return
 		}
-		rq, err := http.NewRequest("POST", uri.String(), bytes.NewReader(rqBody))
-		if err != nil {
-			return nil, err
+		var rq *http.Request
+		if rq, err = http.NewRequest("POST", uri.String(), bytes.NewReader(rqBody)); err != nil {
+			return
 		}
 		rq.Header.Set("Content-Type", "application/octet-stream")
-		rs, err := client.Do(rq)
-		if err != nil {
-			return nil, err
+		var rs *http.Response
+		if rs, err = client.Do(rq); err != nil {
+			return
 		}
+		var body []byte
 		if rs.StatusCode == 200 && rs.Header.Get("Content-Type") == "application/octet-stream" {
-			body, err := ioutil.ReadAll(rs.Body)
-			_ = rs.Body.Close()
-			if err != nil {
-				return nil, err
+			if body, err = ioutil.ReadAll(rs.Body); err == nil {
+				response, err = DecryptAesV2(body, endpoint.transmissionKey)
 			}
-			return DecryptAesV2(body, endpoint.transmissionKey)
+		} else if rs.Header.Get("Content-Type") == "application/json" {
+			if body, err = ioutil.ReadAll(rs.Body); err == nil {
+				var apiError KeeperApiErrorResponse
+				if err = json.Unmarshal(body, &apiError); err == nil {
+					switch apiError.Error {
+					case "key":
+						endpoint.serverKeyId = apiError.KeyId
+					case "region_redirect":
+						err = NewKeeperRegionRedirect(apiError.RegionHost, apiError.AdditionalInfo)
+					case "bad_request":
+						err = NewKeeperInvalidDeviceToken(apiError.AdditionalInfo)
+					default:
+						err = NewKeeperApiError(&apiError.KeeperApiResponse)
+					}
+				}
+			}
+		} else {
+			err = NewKeeperError(fmt.Sprintf("Keeper http request status: %d", rs.StatusCode))
 		}
-		if rs.Header.Get("Content-Type") == "application/json" {
-			body, err := ioutil.ReadAll(rs.Body)
-			if err != nil {
-				return nil, err
-			}
-			var apiError KeeperApiErrorResponse
-			err = json.Unmarshal(body, &apiError)
-			if err != nil {
-				return nil, err
-			}
-			switch apiError.Error {
-			case "key":
-				endpoint.serverKeyId = apiError.KeyId
-				continue
-			case "region_redirect":
-				return nil, NewKeeperRegionRedirect(apiError.RegionHost, apiError.AdditionalInfo)
-			case "bad_request":
-				return nil, NewKeeperInvalidDeviceToken(apiError.AdditionalInfo)
-			default:
-				return nil, NewKeeperApiError(&apiError.KeeperApiResponse)
-			}
+		_ = rs.Body.Close()
+		if err != nil || response != nil {
+			return
 		}
-		return nil, NewKeeperError(fmt.Sprintf("Keeper http request status: %d", rs.StatusCode))
 	}
-	return nil, NewKeeperError("Keeper endpoint: too many attempts")
+	err = NewKeeperError("Keeper endpoint: too many attempts")
+	return
 }
 
 func (endpoint *keeperEndpoint) GetDeviceToken() (token []byte, err error) {

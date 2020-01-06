@@ -161,14 +161,11 @@ func (a *auth) Login(username string, password string) (err error) {
 			}
 			a.context.DataKey = dataKey
 			if loginRs.Keys.EncryptedPrivateKey != "" {
-				pkData, err := DecryptAesV1(Base64UrlDecode(loginRs.Keys.EncryptedPrivateKey), a.context.DataKey)
-				if err == nil {
+				var pkData = Base64UrlDecode(loginRs.Keys.EncryptedPrivateKey)
+				if pkData, err = DecryptAesV1(pkData, a.context.DataKey); err == nil {
 					a.context.PrivateKey, err = LoadPrivateKey(pkData)
-					if err != nil {
-						glog.Warning("Cannot decrypt Private Key")
-						err = nil
-					}
-				} else {
+				}
+				if err != nil {
 					glog.Warning("Cannot decrypt Private Key")
 					err = nil
 				}
@@ -246,10 +243,12 @@ func (a *auth) Login(username string, password string) (err error) {
 					}
 				}
 			}
-			return NewKeeperApiError(loginRs.GetKeeperApiResponse())
+			err = NewKeeperApiError(loginRs.GetKeeperApiResponse())
+			return
 		}
 	}
-	return NewKeeperError("Too many attempts")
+	err = NewKeeperError("Too many attempts")
+	return
 }
 
 func (a *auth) Logout() {
@@ -367,7 +366,8 @@ func (a *auth) RefreshSessionToken() (err error) {
 }
 
 func (a *auth) sendKeeperCommand(rq interface{}) (err error) {
-	return a.ExecuteAuthCommand(rq, new(KeeperApiResponse), true)
+	err = a.ExecuteAuthCommand(rq, new(KeeperApiResponse), true)
+	return
 }
 
 func (a *auth) ExecuteAuthCommand(rq interface{}, rs interface{}, throwOnError bool) (err error) {
@@ -481,24 +481,24 @@ func (a *auth) ChangeMasterPassword(iterations uint32) (password string, err err
 	return
 }
 
-func (a *auth) ShareAccount(shareTo []*AccountShareTo) error {
+func (a *auth) ShareAccount(shareTo []*AccountShareTo) (err error) {
 	for _, st := range shareTo {
-		if key, err := LoadPublicKey(Base64UrlDecode(st.PublicKey)); err == nil {
-			if tk, err := EncryptRsa(a.context.DataKey, key); err == nil {
-				cmd := &ShareAccountCommand{
-					ToRoleId:    st.RoleId,
-					TransferKey: Base64UrlEncode(tk),
-				}
-				rs := new(KeeperApiResponse)
-				if err = a.ExecuteAuthCommand(cmd, rs, true); err != nil {
-					return err
-				}
-			} else {
-				return err
-			}
-		} else {
-			return err
+		var key crypto.PublicKey
+		if key, err = LoadPublicKey(Base64UrlDecode(st.PublicKey)); err != nil {
+			return
+		}
+		var transferKey []byte
+		if transferKey, err = EncryptRsa(a.context.DataKey, key); err != nil {
+			return
+		}
+		cmd := &ShareAccountCommand{
+			ToRoleId:    st.RoleId,
+			TransferKey: Base64UrlEncode(transferKey),
+		}
+		rs := new(KeeperApiResponse)
+		if err = a.ExecuteAuthCommand(cmd, rs, true); err != nil {
+			return
 		}
 	}
-	return nil
+	return
 }

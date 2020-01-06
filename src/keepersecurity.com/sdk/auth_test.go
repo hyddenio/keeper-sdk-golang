@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"errors"
 	"fmt"
@@ -372,7 +373,11 @@ func (am *endpointMock) ExecuteV2Command(rq interface{}, rs interface{}) (err er
 			if command.SessionToken == am.context.limitedSessionToken {
 				data := Base64UrlDecode(command.AuthVerifier)
 				am.context.authSalt = data[4:20]
-				am.context.authHash = Base64UrlEncode(data[20:])
+				var authVerifier = data[20:]
+				hash := sha256.New()
+				hash.Write(authVerifier)
+				authVerifier = hash.Sum(nil)
+				am.context.authHash = Base64UrlEncode(authVerifier)
 				am.context.encryptionParams = command.EncryptionParams
 				am.authExpired = false
 				response.Result = "success"

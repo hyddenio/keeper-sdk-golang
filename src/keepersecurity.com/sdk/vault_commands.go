@@ -93,3 +93,22 @@ type RequestUploadResponse struct {
 	FileUploads      []*UploadObject `json:"file_uploads"`
 	ThumbnailUploads []*UploadObject `json:"thumbnail_uploads"`
 }
+
+type RequestDownloadCommand struct {
+	AuthorizedCommand
+	RecordUid       string   `json:"record_uid,omitempty"`
+	SharedFolderUid string   `json:"shared_folder_uid,omitempty"`
+	TeamUid         string   `json:"team_uid,omitempty"`
+	FileIds         []string `json:"file_ids,omitempty"`
+}
+func (c *RequestDownloadCommand) Command() string {
+	return "request_download"
+}
+
+type DownloadObject struct {
+	Url string `json:"url"`
+}
+type RequestDownloadResponse struct {
+	KeeperApiResponse
+	Downloads []*DownloadObject `json:"downloads"`
+}
