@@ -471,6 +471,7 @@ func (storage *inMemoryKeeperStorage) Clear() {
 	storage.recordKeys = new(inMemoryRecordKeyStorage)
 	storage.sharedFolderKeys = new(inMemorySharedFolderKeyStorage)
 	storage.sharedFolderPermissions = new(inMemorySharedFolderPermissionStorage)
+	storage.nonSharedData = new(inMemoryNonSharedDataStorage)
 	storage.teamKeys = new(inMemoryTeamKeyStorage)
 	storage.folderRecords = new(inMemoryFolderRecordStorage)
 }
