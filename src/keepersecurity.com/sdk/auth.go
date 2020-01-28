@@ -269,7 +269,10 @@ func (a *auth) GetPreLogin(username string) (rs *protobuf.PreLoginResponse, err 
 		}
 		var rqBody, rsBody []byte
 		if rqBody, err = proto.Marshal(rq); err == nil {
-			if rsBody, err = a.endpoint.ExecuteRest("authentication/pre_login", rqBody); err == nil {
+			payload := &protobuf.ApiRequestPayload{
+				Payload: rqBody,
+			}
+			if rsBody, err = a.endpoint.ExecuteRest("authentication/pre_login", payload); err == nil {
 				preLoginRs := new(protobuf.PreLoginResponse)
 				if err = proto.Unmarshal(rsBody, preLoginRs); err == nil {
 					return preLoginRs, nil

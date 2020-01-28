@@ -230,7 +230,7 @@ func (am *endpointMock) GetDeviceToken() ([]byte, error) {
 func (am *endpointMock) InvalidateDeviceToken() {
 	am.deviceToken = nil
 }
-func (am *endpointMock) ExecuteRest(endpoint string, command []byte) ([]byte, error) {
+func (am *endpointMock) ExecuteRest(endpoint string, _ *protobuf.ApiRequestPayload) ([]byte, error) {
 	switch endpoint {
 	case "authentication/pre_login":
 		rs := &protobuf.PreLoginResponse{

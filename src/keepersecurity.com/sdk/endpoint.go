@@ -25,7 +25,7 @@ type KeeperEndpoint interface {
 	SetServerParams(string, []byte, int32)
 	GetDeviceToken() ([]byte, error)
 	InvalidateDeviceToken()
-	ExecuteRest(string, []byte) ([]byte, error)
+	ExecuteRest(string, *protobuf.ApiRequestPayload) ([]byte, error)
 	GetNewUserParams(string) (*protobuf.NewUserMinimumParams, error)
 	ExecuteV2Command(interface{}, interface{}) error
 	ClientVersion() string
@@ -72,7 +72,7 @@ func (endpoint *keeperEndpoint)	InvalidateDeviceToken() {
 	endpoint.deviceToken = nil
 }
 
-func (endpoint *keeperEndpoint) ExecuteRest(path string, payload []byte) (response []byte, err error) {
+func (endpoint *keeperEndpoint) ExecuteRest(path string, payload *protobuf.ApiRequestPayload) (response []byte, err error) {
 	if endpoint.transmissionKey == nil {
 		endpoint.transmissionKey = GetRandomBytes(32)
 	}
@@ -87,11 +87,11 @@ func (endpoint *keeperEndpoint) ExecuteRest(path string, payload []byte) (respon
 	ep, _ := url.Parse(path)
 	uri = uri.ResolveReference(ep)
 
-	apiPayload := &protobuf.ApiRequestPayload{
-		Payload: payload,
-	}
+	//apiPayload := &protobuf.ApiRequestPayload{
+	//	Payload: payload,
+	//}
 	var rqPayload []byte
-	if rqPayload, err = proto.Marshal(apiPayload); err != nil {
+	if rqPayload, err = proto.Marshal(payload); err != nil {
 		return
 	}
 
@@ -173,7 +173,10 @@ func (endpoint *keeperEndpoint) GetDeviceToken() (token []byte, err error) {
 			DeviceName: endpoint.deviceName,
 		}
 		if rqBody, err := proto.Marshal(tokenRq); err == nil {
-			if rs, err := endpoint.ExecuteRest("authentication/get_device_token", rqBody); err == nil {
+			payload := &protobuf.ApiRequestPayload{
+				Payload: rqBody,
+			}
+			if rs, err := endpoint.ExecuteRest("authentication/get_device_token", payload); err == nil {
 				tokenRs := &protobuf.DeviceResponse{}
 				err = proto.Unmarshal(rs, tokenRs)
 				if err == nil {
@@ -203,7 +206,10 @@ func (endpoint *keeperEndpoint) GetNewUserParams(username string) (params *proto
 	}
 
 	if authBody, err := proto.Marshal(authRq); err == nil {
-		if authRs, err := endpoint.ExecuteRest("authentication/get_new_user_params", authBody); err ==  nil {
+		payload := &protobuf.ApiRequestPayload{
+			Payload: authBody,
+		}
+		if authRs, err := endpoint.ExecuteRest("authentication/get_new_user_params", payload); err ==  nil {
 			params = &protobuf.NewUserMinimumParams{}
 			err = proto.Unmarshal(authRs, params)
 		}
@@ -225,7 +231,10 @@ func (endpoint *keeperEndpoint) ExecuteV2Command(rq interface{}, rs interface{})
 	var rqBody []byte
 	if rqBody, err = json.Marshal(rq); err == nil {
 		var rsBody []byte
-		if rsBody, err = endpoint.ExecuteRest("vault/execute_v2_command", rqBody); err == nil {
+		payload := &protobuf.ApiRequestPayload{
+			Payload: rqBody,
+		}
+		if rsBody, err = endpoint.ExecuteRest("vault/execute_v2_command", payload); err == nil {
 			err = json.Unmarshal(rsBody, rs)
 		}
 	}
