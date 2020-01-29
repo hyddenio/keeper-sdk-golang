@@ -87,9 +87,6 @@ func (endpoint *keeperEndpoint) ExecuteRest(path string, payload *protobuf.ApiRe
 	ep, _ := url.Parse(path)
 	uri = uri.ResolveReference(ep)
 
-	//apiPayload := &protobuf.ApiRequestPayload{
-	//	Payload: payload,
-	//}
 	var rqPayload []byte
 	if rqPayload, err = proto.Marshal(payload); err != nil {
 		return
@@ -114,7 +111,7 @@ func (endpoint *keeperEndpoint) ExecuteRest(path string, payload *protobuf.ApiRe
 		}
 		var apiRequest = &protobuf.ApiRequest{
 			EncryptedTransmissionKey: encKey,
-			PublicKeyId:              int32(endpoint.serverKeyId),
+			PublicKeyId:              endpoint.serverKeyId,
 			Locale:                   endpoint.locale,
 			EncryptedPayload:         encPayload,
 		}
