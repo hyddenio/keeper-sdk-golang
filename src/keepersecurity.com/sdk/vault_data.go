@@ -356,7 +356,7 @@ func (vd *vaultData) buildFolders() {
 		if folder.Name == "" {
 			if data != nil {
 				dict := make(map[string]interface{})
-				if err = json.Unmarshal(data, dict); err == nil {
+				if err = json.Unmarshal(data, &dict); err == nil {
 					v := dict["name"]
 					if v != nil {
 						folder.Name = v.(string)

@@ -172,13 +172,18 @@ func syncDown(vault Vault) (result *rebuildTask, err error) {
 	if rs.NonSharedData != nil {
 		for _, nsd := range rs.NonSharedData {
 			recordUid = nsd.RecordUid()
-			if data, err = DecryptAesV1(Base64UrlDecode(nsd.Data()), auth.AuthContext().DataKey); err == nil {
-				if data, err = EncryptAesV1(data, auth.AuthContext().ClientKey); err == nil {
-					storage.NonSharedData().Put(nsd)
+			encData := nsd.Data()
+			if encData != "" {
+				if data, err = DecryptAesV1(Base64UrlDecode(encData), auth.AuthContext().DataKey); err == nil {
+					if data, err = EncryptAesV1(data, auth.AuthContext().ClientKey); err == nil {
+						storage.NonSharedData().Put(nsd)
+					}
 				}
-			}
-			if err != nil {
-				glog.V(1).Info("Error decrypting Non Shared Data", err)
+				if err != nil {
+					glog.V(1).Info("Error decrypting Non Shared Data", err)
+				}
+			} else {
+				storage.NonSharedData().Delete(recordUid)
 			}
 		}
 	}
