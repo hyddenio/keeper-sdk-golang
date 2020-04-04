@@ -25,7 +25,7 @@ func TestAuth_LoginSuccess(t *testing.T) {
 	assert.Assert(t, a.AuthContext().PrivateKey != nil)
 	settings := a.SettingsStorage().GetSettings()
 	assert.Assert(t, settings.LastUsername() == mock.context.username)
-	userSettings := settings.GetUserSettings(mock.context.username)
+	userSettings := GetUserSettings(settings, mock.context.username)
 	assert.Assert(t, userSettings != nil)
 	assert.Assert(t, userSettings.Username() == mock.context.username)
 }
@@ -74,7 +74,7 @@ func TestAuth_LoginSuccess2faOneTime(t *testing.T) {
 	assert.Assert(t, mock.getMethodCalled("GetTwoFactorCode") == 1)
 
 	settings := a.SettingsStorage().GetSettings()
-	user := settings.GetUserSettings(mock.context.username)
+	user := GetUserSettings(settings, mock.context.username)
 	assert.Assert(t, user != nil)
 	assert.Assert(t, user.Username() == mock.context.username)
 	assert.Assert(t, user.TwoFactorToken() == mock.context.twoFactorToken)

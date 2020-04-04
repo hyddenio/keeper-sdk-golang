@@ -29,8 +29,28 @@ type ISettings interface {
 	LastServer() string
 	Users(func (IUserSettings) bool)
 	Servers(func (IServerSettings) bool)
-	GetUserSettings(string) IUserSettings
-	GetServerSettings(string) IServerSettings
+}
+func GetUserSettings(settings ISettings, username string) (result IUserSettings) {
+	username = AdjustUsername(username)
+	settings.Users(func (u IUserSettings) bool {
+		if u.Username() == username {
+			result = u
+			return false
+		}
+		return true
+	})
+	return
+}
+func GetServerSettings(settings ISettings, server string) (result IServerSettings) {
+	server = AdjustServername(server)
+	settings.Servers(func (s IServerSettings) bool {
+		if s.Server() == server {
+			result = s
+			return false
+		}
+		return true
+	})
+	return
 }
 
 type ISettingsStorage interface {
@@ -205,28 +225,6 @@ func (settings *Settings) SetLastUsername(lastUsername string)  {
 }
 func (settings *Settings) SetLastServer(lastServer string) {
 	settings.lastServer = lastServer
-}
-func (settings *Settings) GetUserSettings(username string) IUserSettings {
-	if settings.users != nil {
-		username = AdjustUsername(username)
-		for _, e := range settings.users {
-			if e.username == username {
-				return e
-			}
-		}
-	}
-	return nil
-}
-func (settings *Settings) GetServerSettings(server string) IServerSettings {
-	if settings.servers != nil {
-		for _, e := range settings.servers {
-			server = AdjustServername(server)
-			if e.server == server {
-				return e
-			}
-		}
-	}
-	return nil
 }
 
 type SettingsStorage struct {

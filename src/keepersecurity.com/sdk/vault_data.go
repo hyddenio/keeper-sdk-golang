@@ -3,29 +3,23 @@ package sdk
 import "encoding/json"
 
 type rebuildTask struct {
-	isFullSync bool
-	records set
-	sharedFolders set
+	isFullSync    bool
+	records       Set
+	sharedFolders Set
 }
 func (t *rebuildTask) addSharedFolder(uid string) {
-	if t.sharedFolders == nil {
-		t.sharedFolders = make(set)
-	}
 	if !t.isFullSync {
-		t.sharedFolders[uid] = empty
+		t.sharedFolders.Add(uid)
 	}
 }
 func (t *rebuildTask) addRecord(uid string) {
-	if t.records == nil {
-		t.records = make(set)
-	}
 	if !t.isFullSync {
-		t.records[uid] = empty
+		t.records.Add(uid)
 	}
 }
 
 type VaultData interface {
-	VaultStorage() VaultStorage
+	VaultStorage() IVaultStorage
 	ClientKey() []byte
 
 	RootFolder() *Folder
@@ -48,7 +42,7 @@ type VaultData interface {
 
 
 type vaultData struct {
-	storage    VaultStorage
+	storage    IVaultStorage
 	clientKey  []byte
 	rootFolder *Folder
 
@@ -57,7 +51,7 @@ type vaultData struct {
 	teams map[string]*EnterpriseTeam
 	folders map[string]*Folder
 }
-func NewVaultData(clientKey []byte, storage VaultStorage) VaultData {
+func NewVaultData(clientKey []byte, storage IVaultStorage) VaultData {
 	return &vaultData{
 		rootFolder: &Folder{
 			FolderUid:       "",
@@ -65,8 +59,6 @@ func NewVaultData(clientKey []byte, storage VaultStorage) VaultData {
 			Name:            "My Vault",
 			ParentUid:       "",
 			SharedFolderUid: "",
-			subfolders:      make(map[string]struct{}),
-			records:         make(map[string]struct{}),
 		},
 		storage:       storage,
 		clientKey:     clientKey,
@@ -76,7 +68,7 @@ func NewVaultData(clientKey []byte, storage VaultStorage) VaultData {
 		folders:       make(map[string]*Folder),
 	}
 }
-func (vd *vaultData) VaultStorage() VaultStorage {
+func (vd *vaultData) VaultStorage() IVaultStorage {
 	return vd.storage
 }
 func (vd *vaultData) ClientKey() []byte {
@@ -165,10 +157,10 @@ func (vd *vaultData) rebuildData(changes *rebuildTask) {
 
 	var teamUid string
 	var uids = make(map[string]struct{}, 0)
-	vd.storage.Teams().Enumerate(func (st StorageTeam) bool {
+	vd.storage.Teams().Enumerate(func (st IStorageTeam) bool {
 		var teamKey []byte
 		teamUid = st.TeamUid()
-		vd.storage.TeamKeys().GetLinksForSubject(teamUid, func (key StorageTeamKey) bool {
+		vd.storage.TeamKeys().GetLinksForSubject(teamUid, func (key IStorageTeamKey) bool {
 			if key.EncryptorUid() == vd.storage.PersonalScopeUid() {
 				switch key.KeyType() {
 				case UserClientKey:
@@ -190,6 +182,7 @@ func (vd *vaultData) rebuildData(changes *rebuildTask) {
 	})
 	if len(uids) > 0 {
 		for teamUid = range uids {
+			vd.VaultStorage().SharedFolderKeys().DeleteObject(teamUid)
 			vd.VaultStorage().Teams().Delete(teamUid)
 		}
 	}
@@ -198,18 +191,18 @@ func (vd *vaultData) rebuildData(changes *rebuildTask) {
 	if fullRebuild {
 		vd.sharedFolders = make(map[string]*SharedFolder)
 	} else {
-		if changes != nil && changes.sharedFolders != nil {
-			for sharedFolderUid = range changes.sharedFolders {
+		if changes != nil {
+			for _, sharedFolderUid = range changes.sharedFolders.Keys() {
 				delete(vd.sharedFolders, sharedFolderUid)
 			}
 		}
 	}
 
-	enumerateSharedFolders := func (fn func (StorageSharedFolder) bool )  {
+	enumerateSharedFolders := func (fn func (IStorageSharedFolder) bool )  {
 		if fullRebuild {
 			vd.VaultStorage().SharedFolders().Enumerate(fn)
 		} else {
-			for sharedFolderUid = range changes.sharedFolders {
+			for _, sharedFolderUid = range changes.sharedFolders.Keys() {
 				ssf := vd.VaultStorage().SharedFolders().Get(sharedFolderUid)
 				if ssf != nil {
 					if !fn(ssf) {
@@ -220,10 +213,10 @@ func (vd *vaultData) rebuildData(changes *rebuildTask) {
 		}
 	}
 	uids = make(map[string]struct{}, 0)
-	enumerateSharedFolders(func (ssf StorageSharedFolder) bool {
+	enumerateSharedFolders(func (ssf IStorageSharedFolder) bool {
 		var sharedFolderKey []byte = nil
 		sharedFolderUid = ssf.SharedFolderUid()
-		vd.VaultStorage().SharedFolderKeys().GetLinksForSubject(sharedFolderUid, func (sfk StorageSharedFolderKey) bool {
+		vd.VaultStorage().SharedFolderKeys().GetLinksForSubject(sharedFolderUid, func (sfk IStorageSharedFolderKey) bool {
 			switch sfk.KeyType() {
 			case UserClientKey:
 				if sfk.EncryptorUid() == vd.VaultStorage().PersonalScopeUid() {
@@ -237,12 +230,12 @@ func (vd *vaultData) rebuildData(changes *rebuildTask) {
 			return sharedFolderKey == nil
 		})
 		if sharedFolderKey != nil {
-			var recordPermissions = make([]StorageRecordKey, 0, 20)
-			vd.VaultStorage().RecordKeys().GetLinksForObject(sharedFolderUid, func (link StorageRecordKey) bool {
+			var recordPermissions = make([]IStorageRecordKey, 0, 20)
+			vd.VaultStorage().RecordKeys().GetLinksForObject(sharedFolderUid, func (link IStorageRecordKey) bool {
 				recordPermissions = append(recordPermissions, link); return true
 			})
-			var userPermissions = make([]StorageSharedFolderPermission, 0, 20)
-			vd.VaultStorage().SharedFolderPermissions().GetLinksForSubject(sharedFolderUid, func (link StorageSharedFolderPermission) bool {
+			var userPermissions = make([]IStorageSharedFolderPermission, 0, 20)
+			vd.VaultStorage().SharedFolderPermissions().GetLinksForSubject(sharedFolderUid, func (link IStorageSharedFolderPermission) bool {
 				userPermissions = append(userPermissions, link); return true
 			})
 			sharedFolder := NewSharedFolderFromStorage(ssf, userPermissions, recordPermissions, sharedFolderKey)
@@ -254,6 +247,8 @@ func (vd *vaultData) rebuildData(changes *rebuildTask) {
 	})
 	if len(uids) > 0 {
 		for sharedFolderUid = range uids {
+			vd.VaultStorage().RecordKeys().DeleteObject(sharedFolderUid)
+			vd.VaultStorage().SharedFolderPermissions().DeleteSubject(sharedFolderUid)
 			vd.VaultStorage().SharedFolders().Delete(sharedFolderUid)
 		}
 	}
@@ -262,16 +257,16 @@ func (vd *vaultData) rebuildData(changes *rebuildTask) {
 	if fullRebuild {
 		vd.records = make(map[string]*PasswordRecord)
 	} else {
-		for recordUid = range changes.records {
+		for _,recordUid = range changes.records.Keys() {
 			delete(vd.records, recordUid)
 		}
 	}
 
-	enumerateRecords := func (fn func (StorageRecord) bool)  {
+	enumerateRecords := func (fn func (IStorageRecord) bool) {
 		if fullRebuild {
 			vd.VaultStorage().Records().Enumerate(fn)
 		} else {
-			for recordUid = range changes.records {
+			for _, recordUid = range changes.records.Keys() {
 				sr := vd.VaultStorage().Records().Get(recordUid)
 				if sr != nil {
 					if !fn(sr) {
@@ -283,10 +278,10 @@ func (vd *vaultData) rebuildData(changes *rebuildTask) {
 	}
 
 	uids = make(map[string]struct{}, 0)
-	enumerateRecords(func (sr StorageRecord) bool {
+	enumerateRecords(func (sr IStorageRecord) bool {
 		recordUid = sr.RecordUid()
 		var recordKey []byte = nil
-		vd.VaultStorage().RecordKeys().GetLinksForSubject(recordUid, func (srk StorageRecordKey) bool {
+		vd.VaultStorage().RecordKeys().GetLinksForSubject(recordUid, func (srk IStorageRecordKey) bool {
 			switch StorageKeyType(srk.KeyType()) {
 			case NoRecordKey, UserClientKey, UserPublicKey:
 				if srk.EncryptorUid() == vd.VaultStorage().PersonalScopeUid() {
@@ -321,17 +316,13 @@ func (vd *vaultData) rebuildData(changes *rebuildTask) {
 func (vd *vaultData) buildFolders() {
 	var err error
 	vd.folders = make(map[string]*Folder, 20)
-	vd.rootFolder.records = make(set, 20)
-	vd.rootFolder.subfolders = make(set, 10)
-	vd.VaultStorage().Folders().Enumerate(func (sf StorageFolder) bool {
+	vd.VaultStorage().Folders().Enumerate(func (sf IStorageFolder) bool {
 		folderUid := sf.FolderUid()
 		folder := & Folder{
 			FolderUid:       folderUid,
 			FolderType:      sf.FolderType(),
 			ParentUid:       sf.ParentUid(),
 			SharedFolderUid: sf.SharedFolderUid(),
-			subfolders:      make(set, 20),
-			records:         make(set, 20),
 		}
 		var data []byte = nil
 		var key []byte
@@ -375,15 +366,15 @@ func (vd *vaultData) buildFolders() {
 		if parent = vd.folders[v.ParentUid]; parent == nil {
 			parent = vd.rootFolder
 		}
-		parent.subfolders[k] = empty
+		parent.subfolders.Add(k)
 	}
 
-	vd.storage.FolderRecords().GetAllLinks(func (sfr StorageFolderRecord) bool {
+	vd.storage.FolderRecords().GetAllLinks(func (sfr IStorageFolderRecord) bool {
 		var folder *Folder
 		if folder = vd.folders[sfr.FolderUid()]; folder == nil {
 			folder = vd.rootFolder
 		}
-		folder.records[sfr.RecordUid()] = empty
+		folder.records.Add(sfr.RecordUid())
 		return true
 	})
 }

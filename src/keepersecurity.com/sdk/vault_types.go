@@ -62,10 +62,10 @@ type PasswordRecord struct {
 	shared bool
 	recordKey []byte
 }
-func NewPasswordRecordFromStorage(sr StorageRecord, key []byte) (record *PasswordRecord, err error){
-	record = & PasswordRecord{
+func NewPasswordRecordFromStorage(sr IStorageRecord, key []byte) (record *PasswordRecord, err error) {
+	record = &PasswordRecord{
 		RecordUid:    sr.RecordUid(),
-		owner:        sr.Shared(),
+		owner:        sr.Owner(),
 		shared:       sr.Shared(),
 		recordKey:    key,
 		customFields: make([]*CustomField, 0, 10),
@@ -175,7 +175,8 @@ func NewPasswordRecordFromStorage(sr StorageRecord, key []byte) (record *Passwor
 	}
 	return
 }
-func (p *PasswordRecord) Serialize(storage StorageRecord) (data []byte, extra []byte, udata map[string]interface{}, err error) {
+
+func (p *PasswordRecord) Serialize(storage IStorageRecord) (data []byte, extra []byte, udata map[string]interface{}, err error) {
 	rData := & recordData{
 		Title:   p.Title,
 		Secret1: p.Login,
@@ -338,13 +339,13 @@ func (p *PasswordRecord) RemoveCustomField(name string) *CustomField {
 	return nil
 }
 
-type SharedFolderPermission struct {
+type SharedFolderUserPermission struct {
 	UserId string
-	UserType int
+	UserType int32
 	ManageRecords bool
 	ManageUsers bool
 }
-type SharedFolderRecord struct {
+type SharedFolderRecordPermission struct {
 	RecordUid string
 	CanShare bool
 	CanEdit bool
@@ -356,14 +357,14 @@ type SharedFolder struct {
 	DefaultManageUsers   bool
 	DefaultCanEdit       bool
 	DefaultCanShare      bool
-	userPermissions      []*SharedFolderPermission
-	recordPermissions    []*SharedFolderRecord
+	userPermissions      []*SharedFolderUserPermission
+	recordPermissions    []*SharedFolderRecordPermission
 	sharedFolderKey      []byte
 }
 func NewSharedFolderFromStorage(
-	sf StorageSharedFolder,
-	sfup []StorageSharedFolderPermission,
-	sfrp []StorageRecordKey,
+	sf IStorageSharedFolder,
+	sfup []IStorageSharedFolderPermission,
+	sfrp []IStorageRecordKey,
 	key []byte) (sharedFolder *SharedFolder) {
 
 	sharedFolder = &SharedFolder{
@@ -372,8 +373,8 @@ func NewSharedFolderFromStorage(
 		DefaultManageUsers:   sf.DefaultManageUsers(),
 		DefaultCanEdit:       sf.DefaultCanEdit(),
 		DefaultCanShare:      sf.DefaultCanShare(),
-		userPermissions:      make([]*SharedFolderPermission, 0),
-		recordPermissions:    make([]*SharedFolderRecord, 0),
+		userPermissions:      make([]*SharedFolderUserPermission, 0),
+		recordPermissions:    make([]*SharedFolderRecordPermission, 0),
 		sharedFolderKey:      key,
 	}
 	if name, err := DecryptAesV1(Base64UrlDecode(sf.Name()), key); err == nil {
@@ -382,7 +383,7 @@ func NewSharedFolderFromStorage(
 		sharedFolder.Name = sharedFolder.SharedFolderUid
 	}
 	for _, up := range sfup {
-		sharedFolder.userPermissions = append(sharedFolder.userPermissions, & SharedFolderPermission{
+		sharedFolder.userPermissions = append(sharedFolder.userPermissions, & SharedFolderUserPermission{
 			UserId:        up.UserId(),
 			UserType:      up.UserType(),
 			ManageRecords: up.ManageRecords(),
@@ -390,7 +391,7 @@ func NewSharedFolderFromStorage(
 		})
 	}
 	for _, rp := range sfrp {
-		sharedFolder.recordPermissions = append(sharedFolder.recordPermissions, & SharedFolderRecord{
+		sharedFolder.recordPermissions = append(sharedFolder.recordPermissions, & SharedFolderRecordPermission{
 			RecordUid: rp.RecordUid(),
 			CanShare:  rp.CanShare(),
 			CanEdit:   rp.CanEdit(),
@@ -402,10 +403,10 @@ func NewSharedFolderFromStorage(
 func (sf *SharedFolder) SharedFolderKey() []byte {
 	return sf.sharedFolderKey
 }
-func (sf *SharedFolder) UserPermissions() []*SharedFolderPermission {
+func (sf *SharedFolder) UserPermissions() []*SharedFolderUserPermission {
 	return sf.userPermissions
 }
-func (sf *SharedFolder) RecordPermissions() []*SharedFolderRecord {
+func (sf *SharedFolder) RecordPermissions() []*SharedFolderRecordPermission {
 	return sf.recordPermissions
 }
 
@@ -419,7 +420,7 @@ type EnterpriseTeam struct {
 	teamKey []byte
 	privateKey crypto.PrivateKey
 }
-func NewTeamFromStorage(st StorageTeam, key []byte) (team *EnterpriseTeam, err error) {
+func NewTeamFromStorage(st IStorageTeam, key []byte) (team *EnterpriseTeam, err error) {
 	team = & EnterpriseTeam{
 		TeamUid:       st.TeamUid(),
 		Name:          st.Name(),
@@ -444,20 +445,50 @@ func (t *EnterpriseTeam) PrivateKey() crypto.PrivateKey {
 
 
 var empty = struct{}{}
-type set map[string]struct{}
+type Set struct {
+	_map map[string]struct{}
+}
+func (set *Set) Add(key string) {
+	if set._map == nil {
+		set._map = make(map[string]struct{})
+	}
+	set._map[key] = empty
+}
+func (set *Set) Remove(key string) {
+	if set._map != nil {
+		delete(set._map, key)
+	}
+}
+func (set *Set) IsSet(key string) (ok bool) {
+	if set._map != nil {
+		_, ok = set._map[key]
+	}
+	return
+}
+func (set *Set) Keys() (result []string) {
+	result = make([]string, len(set._map))
+	if len(set._map) > 0 {
+		i := 0
+		for k := range set._map {
+			result[i] = k
+			i++
+		}
+	}
+	return
+}
 
 type Folder struct {
-	FolderUid string
-	FolderType string
-	Name string
-	ParentUid string
+	FolderUid       string
+	FolderType      string
+	Name            string
+	ParentUid       string
 	SharedFolderUid string
-	subfolders set
-	records set
+	subfolders      Set
+	records         Set
 }
-func (f *Folder) Subfolders() map[string]struct{} {
+func (f *Folder) Subfolders() Set {
 	return f.subfolders
 }
-func (f *Folder) Records() map[string]struct{} {
+func (f *Folder) Records() Set {
 	return f.records
 }

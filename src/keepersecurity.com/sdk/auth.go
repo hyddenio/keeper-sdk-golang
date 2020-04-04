@@ -3,25 +3,11 @@ package sdk
 import (
 	"bytes"
 	"crypto"
-	"github.com/golang/glog"
 	"github.com/golang/protobuf/proto"
 	"keepersecurity.com/sdk/protobuf"
 	"regexp"
 	"strings"
 )
-
-type AuthContext struct {
-	Username string
-	DataKey []byte
-	ClientKey []byte
-	PrivateKey crypto.PrivateKey
-	IsEnterpriseAdmin bool
-	SessionToken string
-	Enforcements *AccountEnforcements
-	Settings *AccountSettings
-	twoFactorToken string
-	authResponse string
-}
 
 type Auth interface {
 	Ui() AuthUI
@@ -33,10 +19,91 @@ type Auth interface {
 	Logout()
 	ExecuteAuthCommand(interface{}, interface{}, bool) error
 }
-func ExecRq(auth Auth, rq interface{}) error {
-	return auth.ExecuteAuthCommand(rq, new(KeeperApiResponse), true)
+
+type AuthContext struct {
+	Username string
+	DataKey []byte
+	ClientKey []byte
+	PrivateKey crypto.PrivateKey
+	IsEnterpriseAdmin bool
+	SessionToken string
+	Settings *AccountSettings
+	Enforcements *AccountEnforcements
+	persistTwoFactorToken bool
+	twoFactorToken string
+	authResponse string
+	authSalt []byte
+	authIterations uint32
+}
+func (context *AuthContext) refreshSessionToken(endpoint KeeperEndpoint) (sessionToken string, err error) {
+	loginRq := &LoginCommand{
+		Version:      2,
+		Username:     context.Username,
+		AuthResponse: context.authResponse,
+	}
+	if context.twoFactorToken != "" {
+		loginRq.TwoFactorToken = context.twoFactorToken
+		loginRq.TwoFactorType = "device_token"
+	}
+	loginRs := &LoginResponse{}
+	err = endpoint.ExecuteV2Command(loginRq, loginRs)
+	if err == nil {
+		if loginRs.IsSuccess() {
+			sessionToken = loginRs.SessionToken
+		} else {
+			err = NewKeeperApiError(loginRs.GetKeeperApiResponse())
+		}
+	}
+	return
 }
 
+func (context *AuthContext) executeAuthCommand(endpoint KeeperEndpoint, rq interface{}, rs interface{}, throwOnError bool) (err error) {
+	var authCommand *AuthorizedCommand = nil
+	if tc, ok := rq.(ToAuthorizedCommand); ok {
+		authCommand = tc.GetAuthorizedCommand()
+		authCommand.Username = context.Username
+		authCommand.SessionToken = context.SessionToken
+	}
+	if err = endpoint.ExecuteV2Command(rq, rs); err != nil {
+		return
+	}
+	if toRs, ok := rs.(ToKeeperApiResponse); ok {
+		authRs := toRs.GetKeeperApiResponse()
+		if !authRs.IsSuccess() && authRs.ResultCode == "auth_failed" {
+			context.SessionToken = ""
+			var sessionToken string
+			if sessionToken, err = context.refreshSessionToken(endpoint); err == nil {
+				context.SessionToken = sessionToken
+				if authCommand != nil {
+					authCommand.SessionToken = context.SessionToken
+				}
+				if err = endpoint.ExecuteV2Command(rq, rs); err != nil {
+					return
+				}
+				if toRs, ok = rs.(ToKeeperApiResponse); ok {
+					authRs = toRs.GetKeeperApiResponse()
+				}
+			}
+		}
+		if !authRs.IsSuccess() && throwOnError {
+			err = NewKeeperApiError(authRs)
+		}
+	}
+	return
+}
+
+type primaryCredentials struct {
+	username string
+	password string
+	salt []byte
+	iterations uint32
+}
+
+type secondaryCredentials struct {
+	secondFactorType string
+	secondFactorToken string
+	secondFactorDuration *TwoFactorCodeDuration
+}
 
 type auth struct {
 	ui              AuthUI
@@ -60,7 +127,7 @@ func NewAuth(ui AuthUI, settings ISettingsStorage) Auth {
 		var server = sets.LastServer()
 		var deviceId []byte = nil
 		var keyId int32 = 1
-		sers := sets.GetServerSettings(sets.LastServer())
+		sers := GetServerSettings(sets, sets.LastServer())
 		if sers != nil {
 			server = sers.Server()
 			deviceId = sers.DeviceId()
@@ -87,167 +154,236 @@ func (a *auth) AuthContext() *AuthContext {
 func (a *auth) IsAuthenticated() bool {
 	return a.context != nil && len(a.context.SessionToken) > 0
 }
+
+var twoFactorErrorCodes = map[string]struct{} {
+	"need_totp": empty,
+	"invalid_device_token": empty,
+	"invalid_totp": empty,
+}
+var expireErrorCodes = map[string]struct{} {
+	"auth_expired": empty,
+	"auth_expired_transfer": empty,
+}
+
+func (a *auth) fixPostLoginErrors(loginRs *LoginResponse, context *AuthContext) (result *AuthContext, err error) {
+	if a.ui != nil {
+		switch loginRs.ResultCode {
+		case "auth_expired":
+			prompt := "Do you want to change your password?"
+			if a.ui.Confirmation(loginRs.Message + "\n\n" + prompt) {
+				var intro string
+				var rules []*PasswordRules
+				if context.Settings != nil {
+					intro = context.Settings.PasswordRulesIntro
+					rules = context.Settings.PasswordRules
+				} else if context.Enforcements != nil {
+					intro = context.Enforcements.PasswordRulesIntro
+					rules = context.Enforcements.PasswordRules
+				}
+				matcher := &ruleMatcher{
+					ruleIntro: intro,
+					rules:     make([]passwordRule, len(rules)),
+				}
+				for i, r := range rules {
+					matcher.rules[i] = passwordRule{
+						description: r.Description,
+						isMatch:     r.Match,
+						pattern:     r.Pattern,
+					}
+					matcher.rules[i].regexp, _ = regexp.Compile(r.Pattern)
+				}
+				if password := a.ui.GetNewPassword(matcher); password != "" {
+					failedRules := matcher.MatchFailedRules(password)
+					if len(failedRules) == 0 {
+						var primary *primaryCredentials
+						if primary, err = context.changeMasterPassword(a.endpoint, password); err == nil {
+							var secondary *secondaryCredentials
+							if context.twoFactorToken != "" {
+								secondary = &secondaryCredentials{
+									secondFactorType:  "device_token",
+									secondFactorToken: context.twoFactorToken,
+								}
+							}
+							return a.executeLoginCommand(primary, secondary)
+						}
+					} else {
+						err = NewKeeperError(failedRules[0])
+					}
+				}
+			}
+		case "auth_expired_transfer":
+			prompt := "Do you accept Account Transfer policy?"
+			if a.ui.Confirmation(loginRs.Message + "\n\n" + prompt) {
+				if context.shareAccount(a.endpoint) == nil {
+					var sessionToken string
+					if sessionToken, err = context.refreshSessionToken(a.endpoint); err == nil {
+						context.SessionToken = sessionToken
+						result = context
+						return
+					}
+				}
+			}
+		default:
+			break
+		}
+	} else {
+		err = NewKeeperError("cannot fix login issues in UI-less mode")
+	}
+	if err == nil {
+		err = NewKeeperApiError(loginRs.GetKeeperApiResponse())
+	}
+	return
+}
+
+func (a *auth) executeLoginCommand(primary *primaryCredentials, secondary *secondaryCredentials) (result *AuthContext, err error) {
+	var authHash = Base64UrlEncode(DeriveKeyHashV1(primary.password, primary.salt, primary.iterations))
+	loginRq := &LoginCommand{
+		Version:      2,
+		Include:      []string{"keys", "settings", "enforcements", "is_enterprise_admin", "client_key"},
+		Username:     strings.ToLower(primary.username),
+		AuthResponse: authHash,
+	}
+	if secondary != nil {
+		loginRq.TwoFactorToken = secondary.secondFactorToken
+		loginRq.TwoFactorType = secondary.secondFactorType
+		if secondary.secondFactorDuration != nil {
+			var d = int32(*secondary.secondFactorDuration)
+			loginRq.DeviceTokenExpiresInDays = &d
+		}
+	}
+	var ok bool
+	loginRs := new(LoginResponse)
+	err = a.endpoint.ExecuteV2Command(loginRq, loginRs)
+	if !loginRs.IsSuccess() {
+		if _, ok = twoFactorErrorCodes[loginRs.ResultCode]; ok {
+			var channel = Other
+			switch loginRs.Channel {
+			case "two_factor_channel_google":
+				channel = Authenticator
+			case "two_factor_channel_duo":
+				channel = DuoSecurity
+			}
+			tfaCode, duration := a.ui.GetTwoFactorCode(channel)
+			if tfaCode != "" {
+				secondary = &secondaryCredentials{
+					secondFactorType:     "one_time",
+					secondFactorToken:    tfaCode,
+					secondFactorDuration: &duration,
+				}
+				return a.executeLoginCommand(primary, secondary)
+			}
+			err = NewKeeperApiError(loginRs.GetKeeperApiResponse())
+		} else if _, ok = expireErrorCodes[loginRs.ResultCode]; ok {
+		} else {
+			err = NewKeeperApiError(loginRs.GetKeeperApiResponse())
+		}
+	}
+	if err == nil {
+		if loginRs.Keys != nil {
+			result = new(AuthContext)
+			result.Username = loginRq.Username
+			result.SessionToken = loginRs.SessionToken
+			result.Settings = loginRs.Settings
+			result.Enforcements = loginRs.Enforcements
+			result.authResponse = authHash
+			result.authSalt = primary.salt
+			result.authIterations = primary.iterations
+			if loginRs.DeviceToken != "" {
+				result.twoFactorToken = loginRs.DeviceToken
+				result.persistTwoFactorToken = loginRs.DtScope == "expiration"
+			}
+			if loginRs.IsEnterpriseAdmin != nil {
+				result.IsEnterpriseAdmin = *loginRs.IsEnterpriseAdmin
+			}
+
+			if loginRs.Keys.EncryptedDataKey != "" {
+				key := DeriveKeyHashV2("data_key", primary.password, primary.salt, primary.iterations)
+				result.DataKey, _ = DecryptAesV2(Base64UrlDecode(loginRs.Keys.EncryptedDataKey), key)
+			}
+			if result.DataKey == nil && loginRs.Keys.EncryptionParams != "" {
+				result.DataKey, err = DecryptEncryptionParams(loginRs.Keys.EncryptionParams, primary.password)
+			}
+			if result.DataKey != nil {
+				if loginRs.Keys.EncryptedPrivateKey != "" {
+					var pkData = Base64UrlDecode(loginRs.Keys.EncryptedPrivateKey)
+					if pkData, err = DecryptAesV1(pkData, result.DataKey); err == nil {
+						result.PrivateKey, err = LoadPrivateKey(pkData)
+					}
+				}
+				if loginRs.ClientKey != "" {
+					var clientKey = Base64UrlDecode(loginRs.ClientKey)
+					result.ClientKey, _ = DecryptAesV1(clientKey, result.DataKey)
+				}
+			} else {
+				err = NewKeeperError("missing data key")
+			}
+			if err == nil {
+				if loginRs.IsSuccess() {
+					if result.ClientKey == nil {
+						var clientKey = GenerateAesKey()
+						var encClientKey []byte
+						if encClientKey, err = EncryptAesV1(clientKey, result.DataKey); err == nil {
+							cmd := &SetClientKeyCommand{
+								ClientKey: Base64UrlEncode(encClientKey),
+							}
+							rs := new(SetClientKeyResponse)
+							if err = a.ExecuteAuthCommand(cmd, rs, false); err == nil {
+								if !rs.IsSuccess() {
+									if rs.ResultCode == "exists" {
+										encClientKey = Base64UrlDecode(rs.ClientKey)
+										clientKey, _ = DecryptAesV1(encClientKey, result.DataKey)
+										err = nil
+									}
+								}
+							}
+						}
+						result.ClientKey = clientKey
+					}
+					return
+				} else {
+					return a.fixPostLoginErrors(loginRs, result)
+				}
+			}
+			err = NewKeeperApiError(loginRs.GetKeeperApiResponse())
+		}
+	}
+
+	return
+}
+
 func (a *auth) Login(username string, password string) (err error) {
 	if username == "" || password == "" {
 		return NewKeeperError("empty username and/or password")
 	}
-	configuration := a.settingsStorage.GetSettings()
-	userConf := configuration.GetUserSettings(username)
-	var token string
-	if userConf != nil {
-		token = userConf.TwoFactorToken()
-	}
-	var tokenType = "device_token"
-	var tokenDuration int32 = Every30Days
-
-	var authHash string
 	var preLogin *protobuf.PreLoginResponse
+	if preLogin, err = a.GetPreLogin(username); err != nil {
+		return
+	}
 
-	for attempt := 0; attempt < 5; attempt++ {
-		if preLogin == nil {
-			if preLogin, err = a.GetPreLogin(username); err != nil {
-				return
-			}
-			authHash = ""
-		}
-
-		authParams := preLogin.Salt[0]
-		var iterations = uint32(authParams.Iterations)
-		salt := authParams.Salt
-		if authHash == "" {
-			authHash = Base64UrlEncode(DeriveKeyHashV1(password, salt, iterations))
-		}
-		loginRq := &LoginCommand{
-			Version:      2,
-			Include:      []string{"keys", "settings", "enforcements", "is_enterprise_admin", "client_key"},
-			Username:     strings.ToLower(username),
-			AuthResponse: authHash,
-		}
+	var salt = preLogin.Salt[0]
+	var primary = &primaryCredentials{
+		username:   username,
+		password:   password,
+		salt:       salt.Salt,
+		iterations: uint32(salt.Iterations),
+	}
+	var secondary *secondaryCredentials
+	configuration := a.settingsStorage.GetSettings()
+	userConf := GetUserSettings(configuration, username)
+	if userConf != nil {
+		var token = userConf.TwoFactorToken()
 		if token != "" {
-			loginRq.TwoFactorToken = token
-			loginRq.TwoFactorType = tokenType
-			if tokenType == "one_time" {
-				loginRq.DeviceTokenExpiresInDays = &tokenDuration
+			secondary =	&secondaryCredentials{
+				secondFactorType:  "device_token",
+				secondFactorToken: token,
 			}
-		}
-		loginRs := new(LoginResponse)
-		if err = a.endpoint.ExecuteV2Command(loginRq, loginRs); err != nil {
-			return
-		}
-		if !loginRs.IsSuccess() && loginRs.ResultCode == "auth_failed" {
-			return NewKeeperApiError(loginRs.GetKeeperApiResponse())
-		}
-		if loginRs.DeviceToken != "" {
-			token = loginRs.DeviceToken
-			tokenType = "device_token"
-		}
-
-		if loginRs.SessionToken != "" {
-			a.context.SessionToken = loginRs.SessionToken
-			a.context.Username = loginRq.Username
-			a.context.Settings = loginRs.Settings
-		}
-		if loginRs.Keys != nil {
-			var dataKey []byte
-			if loginRs.Keys.EncryptedDataKey != "" {
-				key := DeriveKeyHashV2("data_key", password, salt, iterations)
-				dataKey, _ = DecryptAesV2(Base64UrlDecode(loginRs.Keys.EncryptedDataKey), key)
-			}
-			if dataKey == nil && loginRs.Keys.EncryptionParams != "" {
-				dataKey, err = DecryptEncryptionParams(loginRs.Keys.EncryptionParams, password)
-			}
-			if dataKey == nil {
-				return NewKeeperError("Missing data key")
-			}
-			a.context.DataKey = dataKey
-			if loginRs.Keys.EncryptedPrivateKey != "" {
-				var pkData = Base64UrlDecode(loginRs.Keys.EncryptedPrivateKey)
-				if pkData, err = DecryptAesV1(pkData, a.context.DataKey); err == nil {
-					a.context.PrivateKey, err = LoadPrivateKey(pkData)
-				}
-				if err != nil {
-					glog.Warning("Cannot decrypt Private Key")
-					err = nil
-				}
-			}
-		}
-
-		if loginRs.IsSuccess() {
-			var clientKey []byte
-			if loginRs.ClientKey != "" {
-				clientKey = Base64UrlDecode(loginRs.ClientKey)
-			} else {
-				ck := GenerateAesKey()
-				if clientKey, err = EncryptAesV1(ck, a.context.DataKey); err == nil {
-					cmd := &SetClientKeyCommand{
-						ClientKey: Base64UrlEncode(clientKey),
-					}
-					rs := new(SetClientKeyResponse)
-					if err = a.ExecuteAuthCommand(cmd, rs, false); err == nil {
-						if !rs.IsSuccess() {
-							if rs.ResultCode == "exists" {
-								clientKey = Base64UrlDecode(rs.ClientKey)
-							}
-						}
-					}
-				}
-			}
-			if clientKey != nil {
-				a.context.ClientKey, _ = DecryptAesV1(clientKey, a.context.DataKey)
-			}
-			a.context.twoFactorToken = token
-			a.context.authResponse = authHash
-			if loginRs.IsEnterpriseAdmin != nil {
-				a.context.IsEnterpriseAdmin = *loginRs.IsEnterpriseAdmin
-			}
-			a.context.Enforcements = loginRs.Enforcements
-
-			a.StoreConfigurationIfChanged(configuration)
-			return
-		} else {
-			if a.ui != nil {
-				switch loginRs.ResultCode {
-				case "need_totp", "invalid_device_token", "invalid_totp":
-					var channel = Other
-					switch loginRs.Channel {
-					case "two_factor_channel_google":
-						channel = Authenticator
-					case "two_factor_channel_duo":
-						channel = DuoSecurity
-					}
-
-					tfaCode, duration := a.ui.GetTwoFactorCode(channel)
-					if tfaCode != "" {
-						token = tfaCode
-						tokenType = "one_time"
-						tokenDuration = int32(duration)
-						continue
-					}
-				case "auth_expired":
-					prompt := "Do you want to change your password?"
-					if a.ui.Confirmation(loginRs.Message + "\n\n" + prompt) {
-						params := preLogin.Salt[0]
-						if newPassword, err := a.ChangeMasterPassword(uint32(params.Iterations)); err == nil {
-							preLogin = nil
-							authHash = ""
-							password = newPassword
-							continue
-						}
-					}
-				case "auth_expired_transfer":
-					prompt := "Do you accept Account Transfer policy?"
-					if a.ui.Confirmation(loginRs.Message + "\n\n" + prompt) {
-						if a.ShareAccount(a.context.Settings.ShareAccountTo) == nil {
-							continue
-						}
-					}
-				}
-			}
-			err = NewKeeperApiError(loginRs.GetKeeperApiResponse())
-			return
 		}
 	}
-	err = NewKeeperError("Too many attempts")
+	var context *AuthContext
+	if context, err = a.executeLoginCommand(primary, secondary); err == nil {
+		a.context = context
+		a.StoreConfigurationIfChanged(configuration)
+	}
 	return
 }
 
@@ -286,7 +422,7 @@ func (a *auth) GetPreLogin(username string) (rs *protobuf.PreLoginResponse, err 
 					continue
 				case *KeeperRegionRedirect:
 					conf := a.settingsStorage.GetSettings()
-					serverConf := conf.GetServerSettings(a.endpoint.Server())
+					serverConf := GetServerSettings(conf, a.endpoint.Server())
 					if serverConf != nil {
 						if serverConf.ServerKeyId() != a.endpoint.ServerKeyId() ||
 							!bytes.Equal(serverConf.DeviceId(), a.endpoint.DeviceToken()) {
@@ -301,7 +437,7 @@ func (a *auth) GetPreLogin(username string) (rs *protobuf.PreLoginResponse, err 
 					var newServer = v.RegionHost()
 					var newDeviceToken []byte = nil
 					var newServerKeyId int32 = 1
-					serverConf = conf.GetServerSettings(a.endpoint.Server())
+					serverConf = GetServerSettings(conf, a.endpoint.Server())
 					if serverConf != nil {
 						newDeviceToken = serverConf.DeviceId()
 						newServerKeyId = serverConf.ServerKeyId()
@@ -321,10 +457,10 @@ func (a *auth) GetPreLogin(username string) (rs *protobuf.PreLoginResponse, err 
 func (a *auth) StoreConfigurationIfChanged(configuration ISettings) {
 	shouldSaveConfig := configuration.LastServer() == "" || configuration.LastUsername() == "" ||
 		configuration.LastServer() != a.endpoint.Server() || configuration.LastUsername() != a.context.Username
-	serverConf := configuration.GetServerSettings(a.endpoint.Server())
+	serverConf := GetServerSettings(configuration, a.endpoint.Server())
 	shouldSaveServer := serverConf == nil || !bytes.Equal(serverConf.DeviceId(), a.endpoint.DeviceToken()) ||
 		serverConf.ServerKeyId() != a.endpoint.ServerKeyId()
-	userConf := configuration.GetUserSettings(a.context.Username)
+	userConf := GetUserSettings(configuration, a.context.Username)
 	shouldSaveUser := userConf == nil || userConf.TwoFactorToken() != a.context.twoFactorToken
 
 	if shouldSaveUser || shouldSaveServer || shouldSaveConfig {
@@ -335,7 +471,9 @@ func (a *auth) StoreConfigurationIfChanged(configuration ISettings) {
 		}
 		if shouldSaveUser {
 			newUser := NewUserSettings(a.context.Username)
-			newUser.twoFactorToken = a.context.twoFactorToken
+			if a.context.persistTwoFactorToken {
+				newUser.twoFactorToken = a.context.twoFactorToken
+			}
 			newSettings.MergeUserSettings(newUser)
 		}
 		if shouldSaveServer {
@@ -349,62 +487,8 @@ func (a *auth) StoreConfigurationIfChanged(configuration ISettings) {
 	}
 }
 
-func (a *auth) RefreshSessionToken() (err error) {
-	loginRq := &LoginCommand{
-		Version:      2,
-		Include:      nil,
-		AuthResponse: a.context.authResponse,
-		Username:     a.context.Username,
-	}
-	if a.context.twoFactorToken != "" {
-		loginRq.TwoFactorToken = a.context.twoFactorToken
-		loginRq.TwoFactorType = "device_token"
-	}
-	loginRs := &LoginResponse{}
-	err = a.endpoint.ExecuteV2Command(loginRq, loginRs)
-	if err == nil {
-		a.context.SessionToken = loginRs.SessionToken
-	}
-	return
-}
-
-func (a *auth) sendKeeperCommand(rq interface{}) (err error) {
-	err = a.ExecuteAuthCommand(rq, new(KeeperApiResponse), true)
-	return
-}
-
 func (a *auth) ExecuteAuthCommand(rq interface{}, rs interface{}, throwOnError bool) (err error) {
-	var authCommand *AuthorizedCommand = nil
-	if tc, ok := rq.(ToAuthorizedCommand); ok {
-		authCommand = tc.GetAuthorizedCommand()
-		authCommand.Username = a.context.Username
-		authCommand.SessionToken = a.context.SessionToken
-	}
-	if err = a.endpoint.ExecuteV2Command(rq, rs); err != nil {
-		return
-	}
-	if toRs, ok := rs.(ToKeeperApiResponse); ok {
-		authRs := toRs.GetKeeperApiResponse()
-		if !authRs.IsSuccess() && authRs.ResultCode == "auth_failed" {
-			a.context.SessionToken = ""
-			err = a.RefreshSessionToken()
-			if err == nil {
-				if authCommand != nil {
-					authCommand.SessionToken = a.context.SessionToken
-				}
-				if err = a.endpoint.ExecuteV2Command(rq, rs); err != nil {
-					return
-				}
-				if toRs, ok = rs.(ToKeeperApiResponse); ok {
-					authRs = toRs.GetKeeperApiResponse()
-				}
-			}
-		}
-		if !authRs.IsSuccess() && throwOnError {
-			err = NewKeeperApiError(authRs)
-		}
-	}
-	return
+	return a.context.executeAuthCommand(a.endpoint, rq, rs, throwOnError)
 }
 
 type passwordRule struct {
@@ -430,68 +514,37 @@ func (matcher *ruleMatcher) GetRuleIntro() string {
 	return matcher.ruleIntro
 }
 
-func (a *auth) ChangeMasterPassword(iterations uint32) (password string, err error) {
-	var intro string
-	var rules []*PasswordRules
-	if a.context.Settings != nil {
-		intro = a.context.Settings.PasswordRulesIntro
-		rules = a.context.Settings.PasswordRules
-	}
-	if rules == nil {
-		if userParams, err := a.endpoint.GetNewUserParams(a.context.Username); err == nil {
-			rules = make([]*PasswordRules, 0)
-			for i, regex := range userParams.PasswordMatchRegex {
-				rules = append(rules, &PasswordRules{
-					Match:       true,
-					Pattern:     regex,
-					Description: userParams.PasswordMatchDescription[i],
-				})
-			}
+func (context *AuthContext) changeMasterPassword(endpoint KeeperEndpoint, password string) (credentials *primaryCredentials, err error) {
+	authSalt := GetRandomBytes(16)
+	authVerifier := CreateAuthVerifier(password, authSalt, context.authIterations)
+	keySalt := GetRandomBytes(16)
+	var encryptionParameters string
+	if encryptionParameters, err = CreateEncryptionParams(password, keySalt, context.authIterations, context.DataKey); err == nil {
+		cmd := &ChangeMasterPasswordCommand{
+			AuthVerifier:     authVerifier,
+			EncryptionParams: encryptionParameters,
 		}
-	}
-
-	matcher := & ruleMatcher{
-		ruleIntro: intro,
-		rules: make([]passwordRule, len(rules)),
-	}
-	for i, r := range rules {
-		matcher.rules[i] = passwordRule{
-			description: r.Description,
-			isMatch: r.Match,
-			pattern: r.Pattern,
-		}
-		matcher.rules[i].regexp, _ = regexp.Compile(r.Pattern)
-	}
-	password = a.ui.GetNewPassword(matcher)
-	if password != "" {
-		rules := matcher.MatchFailedRules(password)
-		if len(rules) == 0 {
-			authSalt := GetRandomBytes(16)
-			authVerifier := CreateAuthVerifier(password, authSalt, iterations)
-			keySalt := GetRandomBytes(16)
-			if encryptionParameters, err := CreateEncryptionParams(password, keySalt, iterations, a.context.DataKey); err == nil {
-				cmd := & ChangeMasterPasswordCommand{
-					AuthVerifier:     authVerifier,
-					EncryptionParams: encryptionParameters,
-				}
-				rs := new(KeeperApiResponse)
-				err = a.ExecuteAuthCommand(cmd, rs, true)
+		rs := new(KeeperApiResponse)
+		if err = context.executeAuthCommand(endpoint, cmd, rs, true); err == nil {
+			credentials = &primaryCredentials{
+				username:   context.Username,
+				password:   password,
+				salt:       authSalt,
+				iterations: context.authIterations,
 			}
-		} else {
-			err = NewKeeperError(rules[0])
 		}
 	}
 	return
 }
 
-func (a *auth) ShareAccount(shareTo []*AccountShareTo) (err error) {
-	for _, st := range shareTo {
+func (context *AuthContext) shareAccount(endpoint KeeperEndpoint) (err error) {
+	for _, st := range context.Settings.ShareAccountTo {
 		var key crypto.PublicKey
 		if key, err = LoadPublicKey(Base64UrlDecode(st.PublicKey)); err != nil {
 			return
 		}
 		var transferKey []byte
-		if transferKey, err = EncryptRsa(a.context.DataKey, key); err != nil {
+		if transferKey, err = EncryptRsa(context.DataKey, key); err != nil {
 			return
 		}
 		cmd := &ShareAccountCommand{
@@ -499,7 +552,7 @@ func (a *auth) ShareAccount(shareTo []*AccountShareTo) (err error) {
 			TransferKey: Base64UrlEncode(transferKey),
 		}
 		rs := new(KeeperApiResponse)
-		if err = a.ExecuteAuthCommand(cmd, rs, true); err != nil {
+		if err = context.executeAuthCommand(endpoint, cmd, rs, true); err != nil {
 			return
 		}
 	}

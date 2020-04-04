@@ -43,14 +43,14 @@ func syncDown(vault Vault) (result *rebuildTask, err error) {
 
 			storage.RecordKeys().Delete(recordUid, storage.PersonalScopeUid())
 			// remove record from all user folders
-			storage.FolderRecords().GetLinksForObject(recordUid, func(sfr StorageFolderRecord) bool {
+			storage.FolderRecords().GetLinksForObject(recordUid, func(sfr IStorageFolderRecord) bool {
 				folderUid = sfr.FolderUid()
 				if folderUid == "" || folderUid == storage.PersonalScopeUid() {
-					storage.FolderRecords().DeleteLink(sfr)
+					storage.FolderRecords().Delete(sfr.SubjectUid(), sfr.ObjectUid())
 				} else {
 					if folder := storage.Folders().Get(folderUid); folder != nil {
 						if folder.FolderType() == "user_folder" {
-							storage.FolderRecords().DeleteLink(sfr)
+							storage.FolderRecords().Delete(sfr.SubjectUid(), sfr.ObjectUid())
 						}
 					}
 				}
@@ -61,9 +61,9 @@ func syncDown(vault Vault) (result *rebuildTask, err error) {
 
 	if rs.RemovedTeams != nil {
 		for _, teamUid = range rs.RemovedTeams {
-			storage.SharedFolderKeys().GetLinksForObject(teamUid, func(ssfk StorageSharedFolderKey) bool {
+			storage.SharedFolderKeys().GetLinksForObject(teamUid, func(ssfk IStorageSharedFolderKey) bool {
 				sharedFolderUid = ssfk.SharedFolderUid()
-				storage.RecordKeys().GetLinksForObject(sharedFolderUid, func(srk StorageRecordKey) bool {
+				storage.RecordKeys().GetLinksForObject(sharedFolderUid, func(srk IStorageRecordKey) bool {
 					result.addRecord(srk.RecordUid())
 					return true
 				})
@@ -79,7 +79,7 @@ func syncDown(vault Vault) (result *rebuildTask, err error) {
 	if rs.RemovedSharedFolders != nil {
 		for _, sharedFolderUid = range rs.RemovedSharedFolders {
 			result.addSharedFolder(sharedFolderUid)
-			storage.RecordKeys().GetLinksForObject(sharedFolderUid, func(srk StorageRecordKey) bool {
+			storage.RecordKeys().GetLinksForObject(sharedFolderUid, func(srk IStorageRecordKey) bool {
 				result.addRecord(srk.RecordUid())
 				return true
 			})
@@ -176,6 +176,7 @@ func syncDown(vault Vault) (result *rebuildTask, err error) {
 			if encData != "" {
 				if data, err = DecryptAesV1(Base64UrlDecode(encData), auth.AuthContext().DataKey); err == nil {
 					if data, err = EncryptAesV1(data, auth.AuthContext().ClientKey); err == nil {
+						nsd.Data_ = Base64UrlEncode(data)
 						storage.NonSharedData().Put(nsd)
 					}
 				}
@@ -504,7 +505,7 @@ func (sfu *SyncDownSharedFolderUser) SharedFolderUid() string {
 func (sfu *SyncDownSharedFolderUser) UserId() string {
 	return sfu.Username
 }
-func (sfu *SyncDownSharedFolderUser) UserType() int {
+func (sfu *SyncDownSharedFolderUser) UserType() int32 {
 	return 1
 }
 func (sfu *SyncDownSharedFolderUser) ManageRecords() bool {
@@ -614,17 +615,17 @@ func (t *SyncDownTeam) Uid() string {
 func (t *SyncDownTeam) EncryptorUid() string {
 	return t.encryptorUid
 }
-func (rmd *SyncDownTeam) KeyType() int32 {
-	return rmd.TeamKeyType_
+func (t *SyncDownTeam) KeyType() int32 {
+	return t.TeamKeyType_
 }
-func (rmd *SyncDownTeam) TeamKey() string {
-	return rmd.TeamKey_
+func (t *SyncDownTeam) TeamKey() string {
+	return t.TeamKey_
 }
-func (rmd *SyncDownTeam) SubjectUid() string {
-	return rmd.TeamUid_
+func (t *SyncDownTeam) SubjectUid() string {
+	return t.TeamUid_
 }
-func (rmd *SyncDownTeam) ObjectUid() string {
-	return rmd.encryptorUid
+func (t *SyncDownTeam) ObjectUid() string {
+	return t.encryptorUid
 }
 
 // Storage Record Meta Data

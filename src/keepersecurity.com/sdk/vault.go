@@ -35,7 +35,7 @@ type vault struct {
 	Auth
 }
 
-func NewVault(auth Auth, storage VaultStorage) Vault {
+func NewVault(auth Auth, storage IVaultStorage) Vault {
 	if storage == nil {
 		storage = NewInMemoryVaultStorage()
 	}
@@ -70,7 +70,7 @@ func (v *vault) ResolveRecordAccessPath(path *RecordAccessPath, forEdit bool, fo
 		return
 	}
 
-	v.VaultStorage().RecordKeys().GetLinksForSubject(path.RecordUid, func(srk StorageRecordKey) (next bool) {
+	v.VaultStorage().RecordKeys().GetLinksForSubject(path.RecordUid, func(srk IStorageRecordKey) (next bool) {
 		next = true
 		if (forEdit && !srk.CanEdit()) || (forShare && !srk.CanShare()) {
 			return
@@ -80,7 +80,7 @@ func (v *vault) ResolveRecordAccessPath(path *RecordAccessPath, forEdit bool, fo
 		} else {
 			if sharedFolder := v.VaultStorage().SharedFolders().Get(srk.EncryptorUid()); sharedFolder != nil {
 				v.VaultStorage().SharedFolderKeys().GetLinksForSubject(sharedFolder.SharedFolderUid(),
-					func(ssfk StorageSharedFolderKey) bool {
+					func(ssfk IStorageSharedFolderKey) bool {
 						if ssfk.EncryptorUid() == "" {
 							path.SharedFolderUid = sharedFolder.SharedFolderUid()
 							ok = true
@@ -111,11 +111,11 @@ func (v *vault) AddRecord(record *PasswordRecord, folderUid string) (err error) 
 	recordKey := GenerateAesKey()
 	var encRecordKey []byte
 	if encRecordKey, err = EncryptAesV1(recordKey, v.AuthContext().DataKey); err != nil {
-		command := & RecordAddCommand {
-			RecordUid:        GenerateUid(),
-			RecordType:       "password",
-			RecordKey:        Base64UrlEncode(encRecordKey),
-			HowLongAgo:       0,
+		command := &RecordAddCommand{
+			RecordUid:  GenerateUid(),
+			RecordType: "password",
+			RecordKey:  Base64UrlEncode(encRecordKey),
+			HowLongAgo: 0,
 		}
 		if folder != nil {
 			command.FolderUid = folder.FolderUid
@@ -136,14 +136,14 @@ func (v *vault) AddRecord(record *PasswordRecord, folderUid string) (err error) 
 		var udata map[string]interface{}
 		if data, extra, udata, err = record.Serialize(nil); err == nil {
 			if data != nil {
-				if data, err = EncryptAesV1(data, v.AuthContext().DataKey); err == nil {
+				if data, err = EncryptAesV1(data, recordKey); err == nil {
 					command.Data = Base64UrlEncode(data)
 				} else {
 					return
 				}
 			}
 			if extra != nil {
-				if extra, err = EncryptAesV1(extra, v.AuthContext().DataKey); err == nil {
+				if extra, err = EncryptAesV1(extra, recordKey); err == nil {
 					command.Data = Base64UrlEncode(data)
 				} else {
 					return
@@ -293,7 +293,7 @@ func (v *vault) DeleteRecord(recordUid string, folderUid string, force bool) (er
 			}
 		}
 	} else {
-
+		//TODO
 	}
 	return
 }

@@ -11,6 +11,13 @@ const (
 	TeamKey = 4
 )
 
+type ITransaction interface {
+	Begin() error
+	Commit() error
+	Rollback() error
+	IsInTransaction() bool
+}
+
 // IUid is the base interface for all entities
 type IUid interface {
 	Uid() string
@@ -26,28 +33,29 @@ type CommonEntityStorage interface {
 	Delete(string)
 	Clear()
 }
-type BaseEntityStorage interface {
-	get(string) IUid
-	put(IUid)
-	enumerate(func (IUid) bool)
+type GenericEntityStorage interface {
+	CommonEntityStorage
+	GetEntity(string) IUid
+	PutEntity(IUid)
+	EnumerateEntities(func (IUid) bool)
 }
 
 type CommonLinkStorage interface {
-	DeleteLink(IUidLink)
 	Delete(string, string)
 	DeleteObject(string)
 	DeleteSubject(string)
 	Clear()
 }
-type BaseLinkStorage interface {
-	put(IUidLink)
-	getLink(string, string) IUidLink
-	getLinksForSubject(string, func (IUidLink) bool)
-	getLinksForObject(string, func (IUidLink) bool)
-	getAllLinks(func (IUidLink) bool)
+type GenericLinkStorage interface {
+	CommonLinkStorage
+	PutLink(IUidLink)
+	GetLink(string, string) IUidLink
+	GetLinksForSubject(string, func (IUidLink) bool)
+	GetLinksForObject(string, func (IUidLink) bool)
+	GetAllLinks(func (IUidLink) bool)
 }
 
-type StorageRecord interface {
+type IStorageRecord interface {
 	RecordUid() string
 	Revision() int64
 	ClientModifiedTime() int64
@@ -60,13 +68,13 @@ type StorageRecord interface {
 	IUid
 }
 
-type StorageNonSharedData interface {
+type IStorageNonSharedData interface {
 	RecordUid() string
 	Data() string
 	IUid
 }
 
-type StorageSharedFolder interface {
+type IStorageSharedFolder interface {
 	SharedFolderUid() string
 	Revision() int64
 	Name() string
@@ -77,7 +85,7 @@ type StorageSharedFolder interface {
 	IUid
 }
 
-type StorageTeam interface {
+type IStorageTeam interface {
 	TeamUid() string
 	Name() string
 	TeamPrivateKey() string
@@ -87,7 +95,7 @@ type StorageTeam interface {
 	IUid
 }
 
-type StorageFolder interface {
+type IStorageFolder interface {
 	FolderUid() string
 	SharedFolderUid() string
 	ParentUid() string
@@ -97,7 +105,7 @@ type StorageFolder interface {
 	IUid
 }
 
-type StorageRecordKey interface {
+type IStorageRecordKey interface {
 	RecordUid() string
 	EncryptorUid() string
 	KeyType() int32
@@ -107,7 +115,7 @@ type StorageRecordKey interface {
 	IUidLink
 }
 
-type StorageSharedFolderKey interface {
+type IStorageSharedFolderKey interface {
 	SharedFolderUid() string
 	EncryptorUid() string
 	KeyType() int32
@@ -115,16 +123,16 @@ type StorageSharedFolderKey interface {
 	IUidLink
 }
 
-type StorageSharedFolderPermission interface {
+type IStorageSharedFolderPermission interface {
 	SharedFolderUid() string
 	UserId() string
-	UserType() int
+	UserType() int32
 	ManageRecords() bool
 	ManageUsers() bool
 	IUidLink
 }
 
-type StorageTeamKey interface {
+type IStorageTeamKey interface {
 	TeamUid() string
 	EncryptorUid() string
 	KeyType() int32
@@ -132,102 +140,102 @@ type StorageTeamKey interface {
 	IUidLink
 }
 
-type StorageFolderRecord interface {
+type IStorageFolderRecord interface {
 	FolderUid() string
 	RecordUid() string
 	IUidLink
 }
 
-type RecordEntityStorage interface {
-	Get(string) StorageRecord
-	Put(StorageRecord)
-	Enumerate(func (StorageRecord) bool)
+type IRecordEntityStorage interface {
+	Get(string) IStorageRecord
+	Put(IStorageRecord)
+	Enumerate(func (IStorageRecord) bool)
 	CommonEntityStorage
 }
-type SharedFolderEntityStorage interface {
-	Get(string) StorageSharedFolder
-	Put(StorageSharedFolder)
-	Enumerate(func (StorageSharedFolder) bool)
-	CommonEntityStorage
-}
-
-type TeamEntityStorage interface {
-	Get(string) StorageTeam
-	Put(StorageTeam)
-	Enumerate(func (StorageTeam) bool)
+type ISharedFolderEntityStorage interface {
+	Get(string) IStorageSharedFolder
+	Put(IStorageSharedFolder)
+	Enumerate(func (IStorageSharedFolder) bool)
 	CommonEntityStorage
 }
 
-type FolderEntityStorage interface {
-	Get(string) StorageFolder
-	Put(StorageFolder)
-	Enumerate(func (StorageFolder) bool)
+type ITeamEntityStorage interface {
+	Get(string) IStorageTeam
+	Put(IStorageTeam)
+	Enumerate(func (IStorageTeam) bool)
 	CommonEntityStorage
 }
 
-type NonSharedDataEntityStorage interface {
-	Get(string) StorageNonSharedData
-	Put(StorageNonSharedData)
-	Enumerate(func (StorageNonSharedData) bool)
+type IFolderEntityStorage interface {
+	Get(string) IStorageFolder
+	Put(IStorageFolder)
+	Enumerate(func (IStorageFolder) bool)
 	CommonEntityStorage
 }
 
-type RecordKeysStorage interface {
-	Put(StorageRecordKey)
-	GetLink(string, string) StorageRecordKey
-	GetLinksForSubject(string, func (StorageRecordKey) bool)
-	GetLinksForObject(string, func (StorageRecordKey) bool)
-	GetAllLinks(func (StorageRecordKey) bool)
+type INonSharedDataEntityStorage interface {
+	Get(string) IStorageNonSharedData
+	Put(IStorageNonSharedData)
+	Enumerate(func (IStorageNonSharedData) bool)
+	CommonEntityStorage
+}
+
+type IRecordKeysStorage interface {
+	Put(IStorageRecordKey)
+	GetLink(string, string) IStorageRecordKey
+	GetLinksForSubject(string, func (IStorageRecordKey) bool)
+	GetLinksForObject(string, func (IStorageRecordKey) bool)
+	GetAllLinks(func (IStorageRecordKey) bool)
 	CommonLinkStorage
 }
-type SharedFolderKeysStorage interface {
-	Put(StorageSharedFolderKey)
-	GetLinksForSubject(string, func (StorageSharedFolderKey) bool)
-	GetLinksForObject(string, func (StorageSharedFolderKey) bool)
-	GetAllLinks(func (StorageSharedFolderKey) bool)
+type ISharedFolderKeysStorage interface {
+	Put(IStorageSharedFolderKey)
+	GetLinksForSubject(string, func (IStorageSharedFolderKey) bool)
+	GetLinksForObject(string, func (IStorageSharedFolderKey) bool)
+	GetAllLinks(func (IStorageSharedFolderKey) bool)
 	CommonLinkStorage
 }
-type SharedFolderPermissionsStorage interface {
-	Put(StorageSharedFolderPermission)
-	GetLinksForSubject(string, func (StorageSharedFolderPermission) bool)
-	GetLinksForObject(string, func (StorageSharedFolderPermission) bool)
-	GetAllLinks(func (StorageSharedFolderPermission) bool)
+type ISharedFolderPermissionsStorage interface {
+	Put(IStorageSharedFolderPermission)
+	GetLinksForSubject(string, func (IStorageSharedFolderPermission) bool)
+	GetLinksForObject(string, func (IStorageSharedFolderPermission) bool)
+	GetAllLinks(func (IStorageSharedFolderPermission) bool)
 	CommonLinkStorage
 }
 
-type TeamKeysStorage interface {
-	Put(StorageTeamKey)
-	GetLinksForSubject(string, func (StorageTeamKey) bool)
-	GetLinksForObject(string, func (StorageTeamKey) bool)
-	GetAllLinks(func (StorageTeamKey) bool)
+type ITeamKeysStorage interface {
+	Put(IStorageTeamKey)
+	GetLinksForSubject(string, func (IStorageTeamKey) bool)
+	GetLinksForObject(string, func (IStorageTeamKey) bool)
+	GetAllLinks(func (IStorageTeamKey) bool)
 	CommonLinkStorage
 }
 
-type FolderRecordsStorage interface {
-	Put(StorageFolderRecord)
-	GetLinksForSubject(string, func (StorageFolderRecord) bool)
-	GetLinksForObject(string, func (StorageFolderRecord) bool)
-	GetAllLinks(func (StorageFolderRecord) bool)
+type IFolderRecordsStorage interface {
+	Put(IStorageFolderRecord)
+	GetLinksForSubject(string, func (IStorageFolderRecord) bool)
+	GetLinksForObject(string, func (IStorageFolderRecord) bool)
+	GetAllLinks(func (IStorageFolderRecord) bool)
 	CommonLinkStorage
 }
 
-type VaultStorage interface {
+type IVaultStorage interface {
 	PersonalScopeUid() string
 	Revision() int64
 	SetRevision(value int64)
 	Clear()
 
-	Records() RecordEntityStorage
-	SharedFolders() SharedFolderEntityStorage
-	Teams() TeamEntityStorage
-	NonSharedData() NonSharedDataEntityStorage
-	Folders() FolderEntityStorage
+	Records() IRecordEntityStorage
+	SharedFolders() ISharedFolderEntityStorage
+	Teams() ITeamEntityStorage
+	NonSharedData() INonSharedDataEntityStorage
+	Folders() IFolderEntityStorage
 
-	RecordKeys() RecordKeysStorage
-	SharedFolderKeys() SharedFolderKeysStorage
-	SharedFolderPermissions() SharedFolderPermissionsStorage
-	TeamKeys() TeamKeysStorage
-	FolderRecords() FolderRecordsStorage
+	RecordKeys() IRecordKeysStorage
+	SharedFolderKeys() ISharedFolderKeysStorage
+	SharedFolderPermissions() ISharedFolderPermissionsStorage
+	TeamKeys() ITeamKeysStorage
+	FolderRecords() IFolderRecordsStorage
 }
 
 type UidLink struct {
@@ -239,10 +247,4 @@ func (link *UidLink) SubjectUid() string {
 }
 func (link *UidLink) ObjectUid() string {
 	return link.objectUid
-}
-
-func NewInMemoryVaultStorage() VaultStorage {
-	var storage VaultStorage = new(inMemoryKeeperStorage)
-	storage.Clear()
-	return storage
 }

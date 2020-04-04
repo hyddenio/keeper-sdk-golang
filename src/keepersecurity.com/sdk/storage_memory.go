@@ -11,19 +11,19 @@ func (es *inMemoryEntityStorage) Delete(uid string) {
 		delete(es.storage, uid)
 	}
 }
-func  (es *inMemoryEntityStorage) get(uid string) (entity IUid) {
+func  (es *inMemoryEntityStorage) GetEntity(uid string) (entity IUid) {
 	if es.storage != nil {
 		entity = es.storage[uid]
 	}
 	return
 }
-func  (es *inMemoryEntityStorage) put(data IUid) {
+func  (es *inMemoryEntityStorage) PutEntity(data IUid) {
 	if es.storage == nil {
 		es.storage = make(map[string]IUid, 0)
 	}
 	es.storage[data.Uid()] = data
 }
-func  (es *inMemoryEntityStorage) enumerate(fn func (data IUid) bool) {
+func  (es *inMemoryEntityStorage) EnumerateEntities(fn func (data IUid) bool) {
 	if es != nil {
 		for _, v := range es.storage {
 			if !fn(v) {
@@ -33,29 +33,21 @@ func  (es *inMemoryEntityStorage) enumerate(fn func (data IUid) bool) {
 	}
 }
 
-type inMemoryPredicateStorage struct {
+type inMemoryLinkStorage struct {
 	storage map[string]map[string]IUidLink
 }
-func (ps *inMemoryPredicateStorage) DeleteLink(link IUidLink) {
+func (ps *inMemoryLinkStorage) Delete(subjectUid string, objectUid string) {
 	if ps.storage != nil {
-		objects := ps.storage[link.SubjectUid()]
+		objects := ps.storage[subjectUid]
 		if objects != nil {
-			delete(objects, link.ObjectUid())
+			delete(objects, objectUid)
 			if len(objects) == 0 {
-				delete(ps.storage, link.SubjectUid())
+				delete(ps.storage, subjectUid)
 			}
 		}
 	}
 }
-func (ps *inMemoryPredicateStorage) Delete(subjectUid string, objectUid string) {
-	if ps.storage != nil {
-		ps.DeleteLink(&UidLink{
-			subjectUid: subjectUid,
-			objectUid:  objectUid,
-		})
-	}
-}
-func (ps *inMemoryPredicateStorage) DeleteObject(objectUid string) {
+func (ps *inMemoryLinkStorage) DeleteObject(objectUid string) {
 	if ps.storage != nil {
 		for subjectUid, objects := range ps.storage {
 			delete(objects, objectUid)
@@ -65,16 +57,16 @@ func (ps *inMemoryPredicateStorage) DeleteObject(objectUid string) {
 		}
 	}
 }
-func (ps *inMemoryPredicateStorage) DeleteSubject(subjectUid string) {
+func (ps *inMemoryLinkStorage) DeleteSubject(subjectUid string) {
 	if ps.storage != nil {
 		delete(ps.storage, subjectUid)
 	}
 }
-func (ps *inMemoryPredicateStorage) Clear() {
+func (ps *inMemoryLinkStorage) Clear() {
 	ps.storage = nil
 }
 
-func (ps *inMemoryPredicateStorage) put(link IUidLink) {
+func (ps *inMemoryLinkStorage) PutLink(link IUidLink) {
 	var objects map[string]IUidLink
 	if ps.storage == nil {
 		ps.storage = make(map[string]map[string]IUidLink)
@@ -87,7 +79,7 @@ func (ps *inMemoryPredicateStorage) put(link IUidLink) {
 	}
 	objects[link.ObjectUid()] = link
 }
-func (ps *inMemoryPredicateStorage) getLink(subjectUid string, objectUid string) (link IUidLink) {
+func (ps *inMemoryLinkStorage) GetLink(subjectUid string, objectUid string) (link IUidLink) {
 	if ps.storage != nil {
 		objects := ps.storage[subjectUid]
 		if objects != nil {
@@ -96,7 +88,7 @@ func (ps *inMemoryPredicateStorage) getLink(subjectUid string, objectUid string)
 	}
 	return
 }
-func (ps *inMemoryPredicateStorage) getLinksForSubject(subjectUid string, fn func (IUidLink) bool) {
+func (ps *inMemoryLinkStorage) GetLinksForSubject(subjectUid string, fn func (IUidLink) bool) {
 	if ps.storage != nil {
 		objects := ps.storage[subjectUid]
 		for _, obj := range objects {
@@ -106,7 +98,7 @@ func (ps *inMemoryPredicateStorage) getLinksForSubject(subjectUid string, fn fun
 		}
 	}
 }
-func (ps *inMemoryPredicateStorage) getLinksForObject(objectUid string, fn func (IUidLink) bool) {
+func (ps *inMemoryLinkStorage) GetLinksForObject(objectUid string, fn func (IUidLink) bool) {
 	if ps.storage != nil {
 		for _, objects := range ps.storage {
 			if obj := objects[objectUid]; obj != nil {
@@ -117,7 +109,7 @@ func (ps *inMemoryPredicateStorage) getLinksForObject(objectUid string, fn func 
 		}
 	}
 }
-func (ps *inMemoryPredicateStorage) getAllLinks(fn func (IUidLink) bool) {
+func (ps *inMemoryLinkStorage) GetAllLinks(fn func (IUidLink) bool) {
 	if ps.storage != nil {
 		for _, objects := range ps.storage {
 			for _, obj := range objects {
@@ -129,349 +121,92 @@ func (ps *inMemoryPredicateStorage) getAllLinks(fn func (IUidLink) bool) {
 	}
 }
 
-
-type inMemoryRecordStorage struct {
-	inMemoryEntityStorage
-}
-func  (entity *inMemoryRecordStorage) Get(uid string) (data StorageRecord) {
-	var obj =  entity.inMemoryEntityStorage.get(uid)
-	if obj != nil {
-		data, _ = obj.(StorageRecord)
-	}
-	return
-}
-func  (entity *inMemoryRecordStorage) Enumerate(fn func (data StorageRecord) bool) {
-	entity.inMemoryEntityStorage.enumerate(func (obj IUid) bool {
-		if r, ok := obj.(StorageRecord); ok {
-			return fn(r)
-		}
-		return true
-	})
-}
-func  (entity *inMemoryRecordStorage) Put(data StorageRecord) {
-	entity.inMemoryEntityStorage.put(data)
-}
-
-type inMemoryNonSharedDataStorage struct {
-	inMemoryEntityStorage
-}
-func  (entity *inMemoryNonSharedDataStorage) Get(uid string) (data StorageNonSharedData) {
-	var obj =  entity.inMemoryEntityStorage.get(uid)
-	if obj != nil {
-		data, _ = obj.(StorageNonSharedData)
-	}
-	return
-}
-func  (entity *inMemoryNonSharedDataStorage) Enumerate(fn func (data StorageNonSharedData) bool) {
-	entity.inMemoryEntityStorage.enumerate(func (obj IUid) bool {
-		if r, ok := obj.(StorageNonSharedData); ok {
-			return fn(r)
-		}
-		return true
-	})
-}
-func  (entity *inMemoryNonSharedDataStorage) Put(data StorageNonSharedData) {
-	entity.inMemoryEntityStorage.put(data)
-}
-
-type inMemorySharedFolderStorage struct {
-	inMemoryEntityStorage
-}
-func  (entity *inMemorySharedFolderStorage) Get(uid string) (data StorageSharedFolder) {
-	var obj =  entity.inMemoryEntityStorage.get(uid)
-	if obj != nil {
-		data, _ = obj.(StorageSharedFolder)
-	}
-	return
-}
-func  (entity *inMemorySharedFolderStorage) Enumerate(fn func (data StorageSharedFolder) bool) {
-	entity.inMemoryEntityStorage.enumerate(func (obj IUid) bool {
-		if r, ok := obj.(StorageSharedFolder); ok {
-			return fn(r)
-		}
-		return true
-	})
-}
-func  (entity *inMemorySharedFolderStorage) Put(data StorageSharedFolder) {
-	entity.inMemoryEntityStorage.put(data)
-}
-
-type inMemoryTeamStorage struct {
-	inMemoryEntityStorage
-}
-func  (entity *inMemoryTeamStorage) Get(uid string) (data StorageTeam) {
-	var obj =  entity.inMemoryEntityStorage.get(uid)
-	if obj != nil {
-		data, _ = obj.(StorageTeam)
-	}
-	return
-}
-func  (entity *inMemoryTeamStorage) Enumerate(fn func (data StorageTeam) bool) {
-	entity.inMemoryEntityStorage.enumerate(func (obj IUid) bool {
-		if r, ok := obj.(StorageTeam); ok {
-			return fn(r)
-		}
-		return true
-	})
-}
-func  (entity *inMemoryTeamStorage) Put(data StorageTeam) {
-	entity.inMemoryEntityStorage.put(data)
-}
-
-type inMemoryFolderStorage struct {
-	inMemoryEntityStorage
-}
-func  (entity *inMemoryFolderStorage) Get(uid string) (data StorageFolder) {
-	var obj =  entity.inMemoryEntityStorage.get(uid)
-	if obj != nil {
-		data, _ = obj.(StorageFolder)
-	}
-	return
-}
-func  (entity *inMemoryFolderStorage) Enumerate(fn func (data StorageFolder) bool) {
-	entity.inMemoryEntityStorage.enumerate(func (obj IUid) bool {
-		if r, ok := obj.(StorageFolder); ok {
-			return fn(r)
-		}
-		return true
-	})
-}
-func  (entity *inMemoryFolderStorage) Put(data StorageFolder) {
-	entity.inMemoryEntityStorage.put(data)
-}
-
-
-type inMemoryRecordKeyStorage struct {
-	inMemoryPredicateStorage
-}
-func (predicate *inMemoryRecordKeyStorage) Put(link StorageRecordKey) {
-	predicate.inMemoryPredicateStorage.put(link)
-}
-func (predicate *inMemoryRecordKeyStorage) GetLink(subjectUid string, objectUid string) (rk StorageRecordKey) {
-	if link := predicate.inMemoryPredicateStorage.getLink(subjectUid, objectUid); link != nil {
-		rk, _ = link.(StorageRecordKey)
-	}
-	return
-}
-func (predicate *inMemoryRecordKeyStorage) GetLinksForSubject(subjectUid string, fn func (StorageRecordKey) bool) {
-	predicate.inMemoryPredicateStorage.getLinksForSubject(subjectUid, func(link IUidLink) bool {
-		if rk, ok := link.(StorageRecordKey); ok {
-			return fn(rk)
-		}
-		return true
-	})
-}
-func (predicate *inMemoryRecordKeyStorage) GetLinksForObject(objectUid string, fn func (StorageRecordKey) bool) {
-	predicate.inMemoryPredicateStorage.getLinksForObject(objectUid, func(link IUidLink) bool {
-		if rk, ok := link.(StorageRecordKey); ok {
-			return fn(rk)
-		}
-		return true
-	})
-}
-func (predicate *inMemoryRecordKeyStorage) GetAllLinks(fn func (StorageRecordKey) bool) {
-	predicate.inMemoryPredicateStorage.getAllLinks(func(link IUidLink) bool {
-		if rk, ok := link.(StorageRecordKey); ok {
-			return fn(rk)
-		}
-		return true
-	})
-}
-
-type inMemorySharedFolderKeyStorage struct {
-	inMemoryPredicateStorage
-}
-func (predicate *inMemorySharedFolderKeyStorage) Put(link StorageSharedFolderKey) {
-	predicate.inMemoryPredicateStorage.put(link)
-}
-func (predicate *inMemorySharedFolderKeyStorage) GetLinksForSubject(subjectUid string, fn func (StorageSharedFolderKey) bool) {
-	predicate.inMemoryPredicateStorage.getLinksForSubject(subjectUid, func(link IUidLink) bool {
-		if rk, ok := link.(StorageSharedFolderKey); ok {
-			return fn(rk)
-		}
-		return true
-	})
-}
-func (predicate *inMemorySharedFolderKeyStorage) GetLinksForObject(objectUid string, fn func (StorageSharedFolderKey) bool) {
-	predicate.inMemoryPredicateStorage.getLinksForObject(objectUid, func(link IUidLink) bool {
-		if rk, ok := link.(StorageSharedFolderKey); ok {
-			return fn(rk)
-		}
-		return true
-	})
-}
-func (predicate *inMemorySharedFolderKeyStorage) GetAllLinks(fn func (StorageSharedFolderKey) bool) {
-	predicate.inMemoryPredicateStorage.getAllLinks(func(link IUidLink) bool {
-		if rk, ok := link.(StorageSharedFolderKey); ok {
-			return fn(rk)
-		}
-		return true
-	})
-}
-
-type inMemorySharedFolderPermissionStorage struct {
-	inMemoryPredicateStorage
-}
-func (predicate *inMemorySharedFolderPermissionStorage) Put(link StorageSharedFolderPermission) {
-	predicate.inMemoryPredicateStorage.put(link)
-}
-func (predicate *inMemorySharedFolderPermissionStorage) GetLinksForSubject(subjectUid string, fn func (StorageSharedFolderPermission) bool) {
-	predicate.inMemoryPredicateStorage.getLinksForSubject(subjectUid, func(link IUidLink) bool {
-		if rk, ok := link.(StorageSharedFolderPermission); ok {
-			return fn(rk)
-		}
-		return true
-	})
-}
-func (predicate *inMemorySharedFolderPermissionStorage) GetLinksForObject(objectUid string, fn func (StorageSharedFolderPermission) bool) {
-	predicate.inMemoryPredicateStorage.getLinksForObject(objectUid, func(link IUidLink) bool {
-		if rk, ok := link.(StorageSharedFolderPermission); ok {
-			return fn(rk)
-		}
-		return true
-	})
-}
-func (predicate *inMemorySharedFolderPermissionStorage) GetAllLinks(fn func (StorageSharedFolderPermission) bool) {
-	predicate.inMemoryPredicateStorage.getAllLinks(func(link IUidLink) bool {
-		if rk, ok := link.(StorageSharedFolderPermission); ok {
-			return fn(rk)
-		}
-		return true
-	})
-}
-
-type inMemoryTeamKeyStorage struct {
-	inMemoryPredicateStorage
-}
-func (predicate *inMemoryTeamKeyStorage) Put(link StorageTeamKey) {
-	predicate.inMemoryPredicateStorage.put(link)
-}
-func (predicate *inMemoryTeamKeyStorage) GetLinksForSubject(subjectUid string, fn func (StorageTeamKey) bool) {
-	predicate.inMemoryPredicateStorage.getLinksForSubject(subjectUid, func(link IUidLink) bool {
-		if rk, ok := link.(StorageTeamKey); ok {
-			return fn(rk)
-		}
-		return true
-	})
-}
-func (predicate *inMemoryTeamKeyStorage) GetLinksForObject(objectUid string, fn func (StorageTeamKey) bool) {
-	predicate.inMemoryPredicateStorage.getLinksForObject(objectUid, func(link IUidLink) bool {
-		if rk, ok := link.(StorageTeamKey); ok {
-			return fn(rk)
-		}
-		return true
-	})
-}
-func (predicate *inMemoryTeamKeyStorage) GetAllLinks(fn func (StorageTeamKey) bool) {
-	predicate.inMemoryPredicateStorage.getAllLinks(func(link IUidLink) bool {
-		if rk, ok := link.(StorageTeamKey); ok {
-			return fn(rk)
-		}
-		return true
-	})
-}
-
-type inMemoryFolderRecordStorage struct {
-	inMemoryPredicateStorage
-}
-func (predicate *inMemoryFolderRecordStorage) Put(link StorageFolderRecord) {
-	predicate.inMemoryPredicateStorage.put(link)
-}
-func (predicate *inMemoryFolderRecordStorage) GetLinksForSubject(subjectUid string, fn func (StorageFolderRecord) bool) {
-	predicate.inMemoryPredicateStorage.getLinksForSubject(subjectUid, func(link IUidLink) bool {
-		if rk, ok := link.(StorageFolderRecord); ok {
-			return fn(rk)
-		}
-		return true
-	})
-}
-func (predicate *inMemoryFolderRecordStorage) GetLinksForObject(objectUid string, fn func (StorageFolderRecord) bool) {
-	predicate.inMemoryPredicateStorage.getLinksForObject(objectUid, func(link IUidLink) bool {
-		if rk, ok := link.(StorageFolderRecord); ok {
-			return fn(rk)
-		}
-		return true
-	})
-}
-func (predicate *inMemoryFolderRecordStorage) GetAllLinks(fn func (StorageFolderRecord) bool) {
-	predicate.inMemoryPredicateStorage.getAllLinks(func(link IUidLink) bool {
-		if rk, ok := link.(StorageFolderRecord); ok {
-			return fn(rk)
-		}
-		return true
-	})
-}
-
-
-type inMemoryKeeperStorage struct {
+type keeperStorage struct {
 	revision int64
 
-	records *inMemoryRecordStorage
-	sharedFolders *inMemorySharedFolderStorage
-	teams *inMemoryTeamStorage
-	nonSharedData *inMemoryNonSharedDataStorage
-	folders *inMemoryFolderStorage
+	records       IRecordEntityStorage
+	sharedFolders ISharedFolderEntityStorage
+	teams         ITeamEntityStorage
+	nonSharedData INonSharedDataEntityStorage
+	folders       IFolderEntityStorage
 
-	recordKeys *inMemoryRecordKeyStorage
-	sharedFolderKeys *inMemorySharedFolderKeyStorage
-	sharedFolderPermissions *inMemorySharedFolderPermissionStorage
-	teamKeys *inMemoryTeamKeyStorage
-	folderRecords *inMemoryFolderRecordStorage
+	recordKeys              IRecordKeysStorage
+	sharedFolderKeys        ISharedFolderKeysStorage
+	sharedFolderPermissions ISharedFolderPermissionsStorage
+	teamKeys                ITeamKeysStorage
+	folderRecords           IFolderRecordsStorage
 }
-func (storage *inMemoryKeeperStorage) PersonalScopeUid() string {
+func (storage *keeperStorage) PersonalScopeUid() string {
 	return "PersonalScopeUid"
 }
-func (storage *inMemoryKeeperStorage) Revision() int64 {
+func (storage *keeperStorage) Revision() int64 {
 	return storage.revision
 }
-func (storage *inMemoryKeeperStorage) SetRevision(value int64) {
+func (storage *keeperStorage) SetRevision(value int64) {
 	storage.revision = value
 }
 
-func (storage *inMemoryKeeperStorage) Records() RecordEntityStorage {
+func (storage *keeperStorage) Records() IRecordEntityStorage {
 	return storage.records
 }
-func (storage *inMemoryKeeperStorage) NonSharedData() NonSharedDataEntityStorage {
+func (storage *keeperStorage) NonSharedData() INonSharedDataEntityStorage {
 	return storage.nonSharedData
 }
-func (storage *inMemoryKeeperStorage) SharedFolders() SharedFolderEntityStorage {
+func (storage *keeperStorage) SharedFolders() ISharedFolderEntityStorage {
 	return storage.sharedFolders
 }
-func (storage *inMemoryKeeperStorage) Teams() TeamEntityStorage {
+func (storage *keeperStorage) Teams() ITeamEntityStorage {
 	return storage.teams
 }
-func (storage *inMemoryKeeperStorage) Folders() FolderEntityStorage {
+func (storage *keeperStorage) Folders() IFolderEntityStorage {
 	return storage.folders
 }
 
-func (storage *inMemoryKeeperStorage) RecordKeys() RecordKeysStorage {
+func (storage *keeperStorage) RecordKeys() IRecordKeysStorage {
 	return storage.recordKeys
 }
-func (storage *inMemoryKeeperStorage) SharedFolderKeys() SharedFolderKeysStorage {
+func (storage *keeperStorage) SharedFolderKeys() ISharedFolderKeysStorage {
 	return storage.sharedFolderKeys
 }
 
-func (storage *inMemoryKeeperStorage) SharedFolderPermissions() SharedFolderPermissionsStorage {
+func (storage *keeperStorage) SharedFolderPermissions() ISharedFolderPermissionsStorage {
 	return storage.sharedFolderPermissions
 }
 
-func (storage *inMemoryKeeperStorage) TeamKeys() TeamKeysStorage {
+func (storage *keeperStorage) TeamKeys() ITeamKeysStorage {
 	return storage.teamKeys
 }
 
-func (storage *inMemoryKeeperStorage) FolderRecords() FolderRecordsStorage {
+func (storage *keeperStorage) FolderRecords() IFolderRecordsStorage {
 	return storage.folderRecords
 }
-func (storage *inMemoryKeeperStorage) Clear() {
+func (storage *keeperStorage) Clear() {
 	storage.revision = 0
-	storage.records = new(inMemoryRecordStorage)
-	storage.sharedFolders = new(inMemorySharedFolderStorage)
-	storage.teams = new(inMemoryTeamStorage)
-	storage.folders = new(inMemoryFolderStorage)
-	storage.recordKeys = new(inMemoryRecordKeyStorage)
-	storage.sharedFolderKeys = new(inMemorySharedFolderKeyStorage)
-	storage.sharedFolderPermissions = new(inMemorySharedFolderPermissionStorage)
-	storage.nonSharedData = new(inMemoryNonSharedDataStorage)
-	storage.teamKeys = new(inMemoryTeamKeyStorage)
-	storage.folderRecords = new(inMemoryFolderRecordStorage)
+	storage.records.Clear()
+	storage.sharedFolders.Clear()
+	storage.teams.Clear()
+	storage.nonSharedData.Clear()
+	storage.recordKeys.Clear()
+	storage.sharedFolderKeys.Clear()
+	storage.sharedFolderPermissions.Clear()
+	storage.teamKeys.Clear()
+	storage.folders.Clear()
+	storage.folderRecords.Clear()
+}
+
+func NewInMemoryVaultStorage() IVaultStorage {
+	var storage = &keeperStorage{
+		revision:                0,
+		records:                 NewRecordEntityStorage(new(inMemoryEntityStorage)),
+		sharedFolders:           NewSharedFolderEntityStorage(new(inMemoryEntityStorage)),
+		teams:                   NewTeamEntityStorage(new(inMemoryEntityStorage)),
+		nonSharedData:           NewNonSharedDataEntityStorage(new(inMemoryEntityStorage)),
+		recordKeys:              NewRecordKeyLinkStorage(new(inMemoryLinkStorage)),
+		sharedFolderKeys:        NewSharedFolderKeyLinkStorage(new(inMemoryLinkStorage)),
+		sharedFolderPermissions: NewSharedFolderPermissionLinkStorage(new(inMemoryLinkStorage)),
+		teamKeys:                NewTeamKeyLinkStorage(new(inMemoryLinkStorage)),
+		folders:                 NewFolderEntityStorage(new(inMemoryEntityStorage)),
+		folderRecords:           NewFolderRecordLinkStorage(new(inMemoryLinkStorage)),
+	}
+	return storage
 }
