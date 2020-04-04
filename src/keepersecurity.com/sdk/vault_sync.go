@@ -528,7 +528,7 @@ func (sft *SyncDownSharedFolderTeam) SharedFolderUid() string {
 func (sft *SyncDownSharedFolderTeam) UserId() string {
 	return sft.TeamUid
 }
-func (sft *SyncDownSharedFolderTeam) UserType() int {
+func (sft *SyncDownSharedFolderTeam) UserType() int32 {
 	return 2
 }
 func (sft *SyncDownSharedFolderTeam) ManageRecords() bool {
