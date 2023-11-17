@@ -7,34 +7,67 @@ import (
 	"github.com/keeper-security/keeper-sdk-golang/sdk/storage"
 )
 
-type Key interface {
-	string | int64 | []byte
-}
+func NewSqliteRecordStorage[T any](
+	getConnection func() *sqlx.DB, schema ITableSchema, ownerValue interface{}) (rto storage.IRecordStorage[T], err error) {
 
-type sqliteEntityStorage[T storage.IUid] struct {
-	*sqliteStorage[T]
-}
-
-func NewSqliteEntityStorage[T storage.IUid](
-	getConnection func() *sqlx.DB, schema ITableSchema, ownerValue interface{}) (sto storage.IEntityStorage[T], err error) {
-	if len(schema.PrimaryKey()) != 1 {
-		err = api.NewKeeperError(fmt.Sprintf(
-			"SqliteEntityStorage (%s): Primary key to have one column.", schema.TableName()))
-	}
-	sto = &sqliteEntityStorage[T]{
-		&sqliteStorage[T]{
+	rto = &sqliteRecordStorage[T]{
+		sqliteStorage[T]{
 			getConnection: getConnection,
 			schema:        schema,
 			ownerValue:    ownerValue,
+			queryCache:    make(map[string]string),
 		},
 	}
 	return
 }
-func (ses *sqliteEntityStorage[T]) GetEntity(uid string) (entity T, err error) {
+
+type sqliteRecordStorage[T any] struct {
+	sqliteStorage[T]
+}
+
+func (srs *sqliteRecordStorage[T]) Load() (record T, err error) {
+	err = srs.SelectAll(func(r T) bool {
+		record = r
+		return false
+	})
+	return
+}
+func (srs *sqliteRecordStorage[T]) Store(record T) (err error) {
+	err = srs.Put([]T{record})
+	return
+}
+func (srs *sqliteRecordStorage[T]) Delete() (err error) {
+	err = srs.DeleteAll()
+	return
+}
+
+func NewSqliteEntityStorage[T any, K storage.Key](
+	getConnection func() *sqlx.DB, schema ITableSchema, ownerValue interface{}) (sto storage.IEntityStorage[T, K], err error) {
+	if len(schema.PrimaryKey()) != 1 {
+		err = api.NewKeeperError(fmt.Sprintf(
+			"SqliteEntityStorage (%s): Primary key to have one column.", schema.TableName()))
+	}
+
+	sto = &sqliteEntityStorage[T, K]{
+		sqliteStorage[T]{
+			getConnection: getConnection,
+			schema:        schema,
+			ownerValue:    ownerValue,
+			queryCache:    make(map[string]string),
+		},
+	}
+	return
+}
+
+type sqliteEntityStorage[T any, K storage.Key] struct {
+	sqliteStorage[T]
+}
+
+func (ses *sqliteEntityStorage[T, K]) GetEntity(key K) (entity T, err error) {
 	var returned = false
-	err = ses.sqliteStorage.SelectFilter(ses.schema.PrimaryKey(), [][]interface{}{{uid}}, func(T) bool {
+	err = ses.SelectFilter(ses.Schema().PrimaryKey(), [][]interface{}{{key}}, func(T) bool {
 		if returned {
-			err = api.NewKeeperError(fmt.Sprintf("Get Entity: more than a one record for UID %v", uid))
+			err = api.NewKeeperError(fmt.Sprintf("Get Entity: more than a one record for UID %v", key))
 		} else {
 			returned = true
 		}
@@ -43,7 +76,7 @@ func (ses *sqliteEntityStorage[T]) GetEntity(uid string) (entity T, err error) {
 	return
 }
 
-func (ses *sqliteEntityStorage[T]) GetAll(cb func(T) bool) (err error) {
+func (ses *sqliteEntityStorage[T, K]) GetAll(cb func(T) bool) (err error) {
 	var entity T
 	err = ses.sqliteStorage.SelectAll(func(e T) bool {
 		if !cb(entity) {
@@ -54,25 +87,24 @@ func (ses *sqliteEntityStorage[T]) GetAll(cb func(T) bool) (err error) {
 	return
 }
 
-func (ses *sqliteEntityStorage[T]) PutEntities(entities []T) (err error) {
+func (ses *sqliteEntityStorage[T, K]) PutEntities(entities []T) (err error) {
 	return ses.Put(entities)
 }
 
-func (ses *sqliteEntityStorage[T]) DeleteUids(uids []string) error {
+func (ses *sqliteEntityStorage[T, K]) DeleteUids(uids []K) error {
 	var values = make([][]interface{}, len(uids))
 	for i, e := range uids {
 		values[i] = []interface{}{e}
 	}
 	return ses.DeleteFilter(ses.schema.PrimaryKey(), values)
 }
-
-type sqliteLinkStorage[T storage.IUidLink] struct {
-	*sqliteStorage[T]
+func (ses *sqliteEntityStorage[T, K]) Clear() error {
+	return ses.DeleteAll()
 }
 
-func NewSqliteLinkStorage[KS Key, KO Key, T storage.IUidLink](
+func NewSqliteLinkStorage[T any, KS storage.Key, KO storage.Key](
 	getConnection func() *sqlx.DB, schema ITableSchema,
-	ownerValue interface{}) (sto storage.ILinkStorage[T], err error) {
+	ownerValue interface{}) (sto storage.ILinkStorage[T, KS, KO], err error) {
 	if len(schema.PrimaryKey()) != 2 {
 		err = api.NewKeeperError(fmt.Sprintf(
 			"SqliteLinkStorage (%s): Primary key to have two columns.", schema.TableName()))
@@ -93,54 +125,69 @@ func NewSqliteLinkStorage[KS Key, KO Key, T storage.IUidLink](
 			objectColumn, schema.TableName()))
 	}
 
-	sto = &sqliteLinkStorage[T]{
-		&sqliteStorage[T]{
+	sto = &sqliteLinkStorage[T, KS, KO]{
+		sqliteStorage[T]{
 			getConnection: getConnection,
 			schema:        schema,
 			ownerValue:    ownerValue,
+			queryCache:    make(map[string]string),
 		},
 	}
 	return
 }
 
-func (sls *sqliteLinkStorage[T]) PutLinks(links []T) (err error) {
+type sqliteLinkStorage[T any, KS storage.Key, KO storage.Key] struct {
+	sqliteStorage[T]
+}
+
+func (sls *sqliteLinkStorage[T, KS, KO]) PutLinks(links []T) (err error) {
 	return sls.Put(links)
 }
-func (sls *sqliteLinkStorage[T]) DeleteLinks(links []storage.IUidLink) (err error) {
+func (sls *sqliteLinkStorage[T, KS, KO]) DeleteLinks(links []storage.IUidLink[KS, KO]) (err error) {
 	var values = make([][]interface{}, len(links))
 	for i, e := range links {
 		values[i] = []interface{}{e.SubjectUid(), e.ObjectUid()}
 	}
 	return sls.DeleteFilter(sls.schema.PrimaryKey(), values)
 }
-func (sls *sqliteLinkStorage[T]) DeleteLinksForObjects(objects []string) (err error) {
+func (sls *sqliteLinkStorage[T, KS, KO]) DeleteLinksForObjects(objects []KO) (err error) {
 	var values = make([][]interface{}, len(objects))
 	for i, e := range objects {
 		values[i] = []interface{}{e}
 	}
 	return sls.DeleteFilter([]string{sls.schema.PrimaryKey()[1]}, values)
 }
-func (sls *sqliteLinkStorage[T]) DeleteLinksForSubjects(subjects []string) (err error) {
+func (sls *sqliteLinkStorage[T, KS, KO]) DeleteLinksForSubjects(subjects []KS) (err error) {
 	var values = make([][]interface{}, len(subjects))
 	for i, e := range subjects {
 		values[i] = []interface{}{e}
 	}
 	return sls.DeleteFilter([]string{sls.schema.PrimaryKey()[0]}, values)
 }
-func (sls *sqliteLinkStorage[T]) GetLinksForObjects(objects []string, cb func(link T) bool) (err error) {
+func (sls *sqliteLinkStorage[T, KS, KO]) GetLinksForObjects(objects []KO, cb func(link T) bool) (err error) {
 	var values = make([][]interface{}, len(objects))
 	for i, e := range objects {
 		values[i] = []interface{}{e}
 	}
 	return sls.SelectFilter([]string{sls.schema.PrimaryKey()[1]}, values, cb)
 }
-func (sls *sqliteLinkStorage[T]) GetLinksForSubjects(subjects []string, cb func(T) bool) (err error) {
+func (sls *sqliteLinkStorage[T, KS, KO]) GetLinksForSubjects(subjects []KS, cb func(T) bool) (err error) {
 	var values = make([][]interface{}, len(subjects))
 	for i, e := range subjects {
 		values[i] = []interface{}{e}
 	}
 	return sls.SelectFilter([]string{sls.schema.PrimaryKey()[0]}, values, cb)
 }
-func (sls *sqliteLinkStorage[T]) GetAll(cb func(T) bool) (err error) {
+func (sls *sqliteLinkStorage[T, KS, KO]) GetAll(cb func(T) bool) (err error) {
 	return sls.SelectAll(cb)
+}
+func (sls *sqliteLinkStorage[T, KS, KO]) GetLink(subjectKey KS, objectKey KO) (link T, err error) {
+	err = sls.SelectFilter(sls.schema.PrimaryKey(), [][]interface{}{{subjectKey, objectKey}}, func(t T) bool {
+		link = t
+		return false
+	})
+	return
+}
+func (sls *sqliteLinkStorage[T, KS, KO]) Clear() error {
+	return sls.DeleteAll()
 }

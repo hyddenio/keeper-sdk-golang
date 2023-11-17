@@ -8,11 +8,6 @@ import (
 	"github.com/keeper-security/keeper-sdk-golang/sdk/auth"
 	"github.com/keeper-security/keeper-sdk-golang/sdk/internal/proto_enterprise"
 	"go.uber.org/zap"
-	"google.golang.org/protobuf/proto"
-)
-
-var (
-	_ IEnterpriseLoader = new(enterpriseLoader)
 )
 
 type enterpriseLoader struct {
@@ -118,20 +113,19 @@ func (el *enterpriseLoader) Load() (err error) {
 	var treeKey = el.enterpriseData.enterpriseInfo.treeKey
 	if el.continuationToken == nil {
 		if el.storage != nil {
-			var entity proto.Message
-			var plugin IEnterprisePlugin
-			if err = el.storage.GetEntities(func(entityType int32, entityDate []byte) bool {
+			if err = el.storage.GetEntities(func(entityType int32, entityData []byte) bool {
 				var et = proto_enterprise.EnterpriseDataEntity(entityType)
-				if plugin = el.EnterpriseData().GetEnterprisePlugin(et); plugin != nil {
-					if entity, err = plugin.NewEntity(entityDate); err != nil {
-						plugin.Store(entity, treeKey)
-					}
+				if plugin := el.enterpriseData.getEnterprisePlugin(et); plugin != nil {
+					var _, _ = plugin.store(entityData, treeKey)
 				}
 				return true
 			}); err != nil {
 				return
 			}
-			el.continuationToken = el.storage.ContinuationToken()
+			if el.continuationToken, err = el.storage.ContinuationToken(); err != nil {
+				logger.Warn("Error loading enterprise settings", zap.Error(err))
+				el.continuationToken = nil
+			}
 		}
 	}
 
@@ -148,40 +142,41 @@ func (el *enterpriseLoader) Load() (err error) {
 			if el.storage != nil {
 				el.storage.Clear()
 			}
-			for _, x := range el.EnterpriseData().GetSupportedEntities() {
-				if plugin := el.EnterpriseData().GetEnterprisePlugin(x); plugin != nil {
-					plugin.Clear()
+			for _, x := range el.enterpriseData.getSupportedEntities() {
+				if plugin := el.enterpriseData.getEnterprisePlugin(x); plugin != nil {
+					plugin.clear()
 				}
 			}
 		}
-		if len(el.EnterpriseData().EnterpriseInfo().EnterpriseName()) == 0 {
+		if len(el.enterpriseData.enterpriseInfo.enterpriseName) == 0 {
 			el.enterpriseData.enterpriseInfo.enterpriseName = rsData.GetGeneralData().GetEnterpriseName()
 			el.enterpriseData.enterpriseInfo.isDistributor = rsData.GetGeneralData().GetDistributor()
 		}
-		var entityKey string
-		var entity proto.Message
+
 		for _, ed := range rsData.Data {
 			var entityType = ed.GetEntity()
-			plugin := el.EnterpriseData().GetEnterprisePlugin(entityType)
+			plugin := el.enterpriseData.getEnterprisePlugin(entityType)
 			if plugin == nil {
 				continue
 			}
 			for _, edd := range ed.GetData() {
-				if entity, err = plugin.NewEntity(edd); err != nil {
-					break
+				var storageKey string
+				if ed.GetDelete() {
+					if storageKey, err = plugin.delete(edd); err != nil {
+						break
+					}
+					if el.storage != nil {
+						err = el.Storage().DeleteEntity(int32(entityType), storageKey)
+					}
+				} else {
+					if storageKey, err = plugin.store(edd, treeKey); err != nil {
+						break
+					}
+					if el.storage != nil {
+						err = el.Storage().PutEntity(int32(entityType), storageKey, edd)
+					}
 				}
 
-				if ed.GetDelete() {
-					if el.storage != nil {
-						err = el.Storage().DeleteEntity(int32(entityType), entityKey)
-					}
-					plugin.Delete(entity)
-				} else {
-					if el.storage != nil {
-						err = el.Storage().PutEntity(int32(entityType), entityKey, edd)
-					}
-					plugin.Store(entity, treeKey)
-				}
 				if err != nil {
 					break
 				}
@@ -191,13 +186,28 @@ func (el *enterpriseLoader) Load() (err error) {
 			break
 		}
 		if el.storage != nil {
-			el.Storage().SetContinuationToken(rsData.ContinuationToken)
-			el.Storage().Flush()
+			_ = el.Storage().SetContinuationToken(rsData.ContinuationToken)
+			err = el.Storage().Flush()
 		}
 		el.continuationToken = rsData.ContinuationToken
 		if !rsData.GetHasMore() {
 			break
 		}
+	}
+
+	var ed = el.enterpriseData
+	if ed.rootNode == nil {
+		ed.Nodes().GetAllEntities(
+			func(node INode) bool {
+				if node.ParentId() == 0 {
+					if n, ok := node.(INodeEdit); ok {
+						n.SetName(ed.enterpriseInfo.enterpriseName)
+					}
+					ed.rootNode = node
+					return false
+				}
+				return true
+			})
 	}
 	return
 }

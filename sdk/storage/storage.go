@@ -1,46 +1,58 @@
 package storage
 
-type IUid interface {
-	Uid() string
+type IRecordStorage[T any] interface {
+	Load() (T, error)
+	Store(T) error
+	Delete() error
 }
 
-type IUidLink interface {
-	SubjectUid() string
-	ObjectUid() string
+type Key interface {
+	string | int64
 }
-
-type IEntityStorage[T IUid] interface {
-	GetEntity(string) (T, error)
+type IEntityStorage[T any, K Key] interface {
+	GetEntity(K) (T, error)
 	PutEntities([]T) error
 	GetAll(func(T) bool) error
-	DeleteUids([]string) error
+	DeleteUids([]K) error
+	Clear() error
 }
 
-type ILinkStorage[T IUidLink] interface {
+type IUidLink[KS Key, KO Key] interface {
+	SubjectUid() KS
+	ObjectUid() KO
+}
+
+type ILinkStorage[T any, KS Key, KO Key] interface {
 	PutLinks([]T) error
-	DeleteLinks([]IUidLink) error
-	DeleteLinksForSubjects([]string) error
-	DeleteLinksForObjects([]string) error
-	GetLinksForSubjects([]string, func(T) bool) error
-	GetLinksForObjects([]string, func(T) bool) error
+	DeleteLinks([]IUidLink[KS, KO]) error
+	DeleteLinksForSubjects([]KS) error
+	DeleteLinksForObjects([]KO) error
+	GetLinksForSubjects([]KS, func(T) bool) error
+	GetLinksForObjects([]KO, func(T) bool) error
 	GetAll(func(T) bool) error
+	GetLink(KS, KO) (T, error)
+	Clear() error
 }
 
-type uidLink struct {
-	subjectUid string
-	objectUid  string
+type IUid[K Key] interface {
+	Uid() K
 }
 
-func NewUidLink(subjectUid string, objectUid string) IUidLink {
-	return &uidLink{
+func NewUidLink[KS Key, KO Key](subjectUid KS, objectUid KO) IUidLink[KS, KO] {
+	return &uidLink[KS, KO]{
 		subjectUid: subjectUid,
 		objectUid:  objectUid,
 	}
 }
 
-func (link *uidLink) SubjectUid() string {
+type uidLink[KS comparable, KO comparable] struct {
+	subjectUid KS
+	objectUid  KO
+}
+
+func (link *uidLink[KS, KO]) SubjectUid() KS {
 	return link.subjectUid
 }
-func (link *uidLink) ObjectUid() string {
+func (link *uidLink[KS, KO]) ObjectUid() KO {
 	return link.objectUid
 }

@@ -1,0 +1,1 @@
+protoc --go_out=.. --proto_path=. --go_opt=Menterprise.proto=sdk/internal/proto_enterprise --go_opt=MAPIRequest.proto=sdk/internal/proto_auth APIRequest.proto

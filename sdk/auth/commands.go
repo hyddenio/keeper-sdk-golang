@@ -46,3 +46,39 @@ type AuthorizedCommand struct {
 func (command *AuthorizedCommand) GetAuthorizedCommand() *AuthorizedCommand {
 	return command
 }
+
+// IMPLEMENTATION
+
+type ExecuteCommand struct {
+	AuthorizedCommand
+	Requests []IKeeperCommand `json:"requests"`
+}
+
+func (c *ExecuteCommand) CommandName() string {
+	return "execute"
+}
+
+type ExecuteResponse struct {
+	KeeperApiResponse
+	Responses []*KeeperApiResponse `json:"results"`
+}
+
+type TeamGetKeysCommand struct {
+	AuthorizedCommand
+	Teams []string `json:"teams"`
+}
+
+func (c *TeamGetKeysCommand) CommandName() string {
+	return "team_get_keys"
+}
+
+type TeamKeyResponse struct {
+	TeamId string `json:"team_id"`
+	Key    string `json:"key"`
+	Type   int    `json:"type"`
+	Result string `json:"result"`
+}
+type TeamGetKeysResponse struct {
+	KeeperApiResponse
+	Keys []TeamKeyResponse `json:"keys"`
+}

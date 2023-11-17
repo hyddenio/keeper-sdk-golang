@@ -1,59 +1,60 @@
 package storage
 
-import (
-	"encoding/binary"
-	"github.com/keeper-security/keeper-sdk-golang/sdk/api"
-	"hash/crc64"
-	"sync"
-)
+func NewInMemoryRecordStorage[T any]() IRecordStorage[T] {
+	return &inMemoryRecordStorage[T]{}
+}
 
-var (
-	hasher = crc64.New(crc64.MakeTable(crc64.ISO))
-	mutex  sync.Mutex
-)
+type inMemoryRecordStorage[T any] struct {
+	record T
+}
 
-func getKey[K Key](key K) (res int64, err error) {
-	var ok bool
-	if res, ok = any(key).(int64); ok {
-		return
-	}
-	mutex.Lock()
-	hasher.Reset()
-	switch v := any(key).(type) {
-	case string:
-		_, err = hasher.Write([]byte(v))
-	case []byte:
-		_, err = hasher.Write(v)
-	default:
-		err = api.NewKeeperError("Unsupported Key type")
-	}
-	if err == nil {
-		res = int64(hasher.Sum64())
-	}
-	mutex.Unlock()
+func (mrs *inMemoryRecordStorage[T]) Load() (record T, err error) {
+	record = mrs.record
+	return
+}
+func (mrs *inMemoryRecordStorage[T]) Store(record T) (err error) {
+	var empty T
+	mrs.record = empty
+	return
+}
+func (mrs *inMemoryRecordStorage[T]) Delete() (err error) {
+	mrs.record = *new(T)
 	return
 }
 
-type inMemoryEntityStorage[K Key, T IUid[K]] struct {
-	storage map[int64]T
+func NewInMemoryEntityStorage[T interface{}, K Key](entityKey func(T) K) IEntityStorage[T, K] {
+	return &inMemoryEntityStorage[T, K]{
+		onEntityKey: entityKey,
+	}
 }
 
-func NewInMemoryEntityStorage[K Key, T IUid[K]]() IEntityStorage[K, T] {
-	return new(inMemoryEntityStorage[K, T])
+type inMemoryEntityStorage[T any, K Key] struct {
+	storage     map[K]T
+	onEntityKey func(T) K
 }
 
-func (mes *inMemoryEntityStorage[K, T]) GetEntity(uid K) (entity T, err error) {
+func (mes *inMemoryEntityStorage[T, K]) getEntityKey(entity T) K {
+	if mes.onEntityKey != nil {
+		return mes.onEntityKey(entity)
+	}
+	panic("Not implemented")
+}
+
+func (mes *inMemoryEntityStorage[T, K]) getStorage() map[K]T {
+	if mes.storage == nil {
+		mes.storage = make(map[K]T)
+	}
+	return mes.storage
+}
+
+func (mes *inMemoryEntityStorage[T, K]) GetEntity(entityId K) (entity T, err error) {
 	if mes.storage == nil {
 		return
 	}
-	var keyHash int64
-	if keyHash, err = getKey(uid); err != nil {
-		return
-	}
-	entity, _ = mes.storage[keyHash]
+	entity, _ = mes.storage[entityId]
 	return
 }
-func (mes *inMemoryEntityStorage[K, T]) GetAll(cb func(T) bool) (err error) {
+func (mes *inMemoryEntityStorage[T, K]) GetAll(cb func(T) bool) (err error) {
 	if mes.storage == nil {
 		return
 	}
@@ -64,187 +65,171 @@ func (mes *inMemoryEntityStorage[K, T]) GetAll(cb func(T) bool) (err error) {
 	}
 	return
 }
-func (mes *inMemoryEntityStorage[K, T]) PutEntities(entities []T) (err error) {
+func (mes *inMemoryEntityStorage[T, K]) PutEntities(entities []T) (err error) {
 	var storage = mes.getStorage()
-	var keyHash int64
 	for _, e := range entities {
-		if keyHash, err = getKey(e.Uid()); err != nil {
-			break
-		}
-		storage[keyHash] = e
+		storage[mes.getEntityKey(e)] = e
 	}
 	return
 }
-func (mes *inMemoryEntityStorage[K, T]) DeleteUids(keys []K) (err error) {
+func (mes *inMemoryEntityStorage[T, K]) DeleteUids(keys []K) (err error) {
 	if mes.storage == nil {
 		return
 	}
-	var keyHash int64
-	for _, e := range keys {
-		if keyHash, err = getKey(e); err != nil {
-			break
-		}
-		delete(mes.storage, keyHash)
+	for _, key := range keys {
+		delete(mes.storage, key)
 	}
 	return
 }
+func (mes *inMemoryEntityStorage[T, K]) Clear() error {
+	mes.storage = nil
+	return nil
+}
 
-func (mes *inMemoryEntityStorage[K, T]) getStorage() map[int64]T {
-	if mes.storage == nil {
-		mes.storage = make(map[int64]T)
+func NewInMemoryLinkStorage[T any, KS Key, KO Key](subjectKey func(T) KS, objectKey func(T) KO) ILinkStorage[T, KS, KO] {
+	return &inMemoryLinkStorage[T, KS, KO]{
+		onSubjectKey: subjectKey,
+		onObjectKey:  objectKey,
 	}
-	return mes.storage
 }
 
-type inMemoryLinkStorage[KS Key, KO Key, T IUidLink[KO, KS]] struct {
-	storage map[int64]map[int64]T
+type inMemoryLinkStorage[T interface{}, KS Key, KO Key] struct {
+	storage      map[KS]map[KO]T
+	onSubjectKey func(T) KS
+	onObjectKey  func(T) KO
 }
 
-func (mls *inMemoryLinkStorage[KS, KO, T]) getStorage() map[int64]map[int64]T {
+func (mls *inMemoryLinkStorage[T, KS, KO]) getSubjectKey(entity T) KS {
+	if mls.onSubjectKey != nil {
+		return mls.onSubjectKey(entity)
+	}
+	panic("Not implemented")
+}
+func (mls *inMemoryLinkStorage[T, KS, KO]) getObjectKey(entity T) KO {
+	if mls.onSubjectKey != nil {
+		return mls.onObjectKey(entity)
+	}
+	panic("Not implemented")
+}
+
+func (mls *inMemoryLinkStorage[T, KS, KO]) getStorage() map[KS]map[KO]T {
 	if mls.storage == nil {
-		mls.storage = make(map[int64]map[int64]T)
+		mls.storage = make(map[KS]map[KO]T)
 	}
 	return mls.storage
 }
-func (mls *inMemoryLinkStorage[KS, KO, T]) PutLinks(links []T) (err error) {
+func (mls *inMemoryLinkStorage[T, KS, KO]) PutLinks(links []T) (err error) {
 	var storage = mls.getStorage()
-	var keyHash int64
 	var ok bool
-	var objects map[int64]T
-	for _, e := range links {
-		if keyHash, err = getKey(e.SubjectUid()); err != nil {
-			break
+	var objects map[KO]T
+	for _, l := range links {
+		var subjectKey = mls.getSubjectKey(l)
+		if objects, ok = storage[subjectKey]; !ok {
+			objects = make(map[KO]T)
+			storage[subjectKey] = objects
 		}
-		if objects, ok = storage[keyHash]; !ok {
-			objects = make(map[int64]T)
-			storage[keyHash] = objects
-		}
-		if keyHash, err = getKey(e.ObjectUid()); err != nil {
-			break
-		}
-		objects[keyHash] = e
+		var objectKey = mls.getObjectKey(l)
+		objects[objectKey] = l
 	}
 	return
 }
-func (mls *inMemoryLinkStorage[KS, KO, T]) DeleteLinks(links []IUidLink[KO, KS]) (err error) {
+func (mls *inMemoryLinkStorage[T, KS, KO]) DeleteLinks(links []IUidLink[KS, KO]) (err error) {
 	if mls.storage != nil {
 		return
 	}
-	var keyHash int64
 	var ok bool
-	var objects map[int64]T
-	for _, link := range links {
-		if keyHash, err = getKey(link.SubjectUid()); err != nil {
-			break
+	var objects map[KO]T
+	for _, l := range links {
+		var subjectKey = l.SubjectUid()
+		if objects, ok = mls.storage[subjectKey]; ok {
+			delete(objects, l.ObjectUid())
 		}
-		if objects, ok = mls.storage[keyHash]; ok {
-			if keyHash, err = getKey(link.ObjectUid()); err == nil {
-				delete(objects, keyHash)
-			} else {
-				break
+	}
+	return
+}
+func (mls *inMemoryLinkStorage[T, KS, KO]) DeleteLinksForSubjects(subjectKeys []KS) (err error) {
+	if mls.storage != nil {
+		return
+	}
+	for _, subjectKey := range subjectKeys {
+		delete(mls.storage, subjectKey)
+	}
+	return
+}
+func (mls *inMemoryLinkStorage[T, KS, KO]) DeleteLinksForObjects(objectKeys []KO) (err error) {
+	if mls.storage != nil {
+		return
+	}
+	for _, objects := range mls.storage {
+		for _, objectKey := range objectKeys {
+			delete(objects, objectKey)
+		}
+	}
+	return
+}
+func (mls *inMemoryLinkStorage[T, KS, KO]) GetLinksForSubjects(subjectKeys []KS, cb func(T) bool) (err error) {
+	if mls.storage != nil {
+		return
+	}
+	var ok bool
+	var objects map[KO]T
+	for _, subjectKey := range subjectKeys {
+		if objects, ok = mls.storage[subjectKey]; ok {
+			for _, v := range objects {
+				if !cb(v) {
+					return
+				}
 			}
 		}
 	}
 	return
 }
-func (mls *inMemoryLinkStorage[KS, KO, T]) DeleteLinksForSubjects(subjects []KS) (err error) {
+func (mls *inMemoryLinkStorage[T, KS, KO]) GetLinksForObjects(objectKeys []KO, cb func(T) bool) (err error) {
 	if mls.storage != nil {
 		return
 	}
-	var keyHash int64
-	for _, subjectUid := range subjects {
-		if keyHash, err = getKey(subjectUid); err != nil {
-			break
-		}
-		delete(mls.storage, keyHash)
-	}
-	return
-}
-func (mls *inMemoryLinkStorage[KS, KO, T]) DeleteLinksForObjects(uids []KO) (err error) {
-	if mls.storage != nil {
-		return
-	}
-	var keyHash int64
-	var objects map[int64]T
-	for _, uid := range uids {
-		if keyHash, err = getKey(uid); err != nil {
-			break
-		}
-		for _, objects = range mls.storage {
-			delete(objects, keyHash)
-		}
-	}
-	return
-}
-func (mls *inMemoryLinkStorage[KS, KO, T]) GetLinksForObjects(uids []KO, cb func(T) bool) (err error) {
-	if mls.storage != nil {
-		return
-	}
-	var keyHash int64
-	var linkId [16]byte
-	var alreadyReturned = make(map[[16]byte]bool)
 	var ok bool
+	var objects map[KO]T
 	var link T
-	for _, uid := range uids {
-		if keyHash, err = getKey(uid); err != nil {
-			break
-		}
-		for k, v := range mls.storage {
-			if link, ok = v[keyHash]; ok {
-				copy(linkId[0:8], binary.BigEndian.AppendUint64(nil, uint64(k)))
-				copy(linkId[8:16], binary.BigEndian.AppendUint64(nil, uint64(keyHash)))
-				if _, ok = alreadyReturned[linkId]; !ok {
-					if !cb(link) {
-						return
-					}
-					alreadyReturned[linkId] = true
-				}
-			}
-		}
-	}
-
-	return
-}
-func (mls *inMemoryLinkStorage[KS, KO, T]) GetLinksForSubjects(uids []KS, cb func(T) bool) (err error) {
-	if mls.storage != nil {
-		return
-	}
-	var objects map[int64]T
-	var keyHash int64
-	var ok bool
-	var linkId [16]byte
-	var alreadyReturned = make(map[[16]byte]bool)
-	for _, uid := range uids {
-		if keyHash, err = getKey(uid); err != nil {
-			break
-		}
-		if objects, ok = mls.storage[keyHash]; ok {
-			for k, v := range objects {
-				copy(linkId[0:8], binary.BigEndian.AppendUint64(nil, uint64(keyHash)))
-				copy(linkId[8:16], binary.BigEndian.AppendUint64(nil, uint64(k)))
-				if _, ok = alreadyReturned[linkId]; !ok {
-					if !cb(v) {
-						return
-					}
-					alreadyReturned[linkId] = true
-				}
-			}
-		}
-	}
-
-	return
-}
-func (mls *inMemoryLinkStorage[KS, KO, T]) GetAll(cb func(T) bool) (err error) {
-	if mls.storage != nil {
-		return
-	}
-	var objects map[int64]T
 	for _, objects = range mls.storage {
-		for _, x := range objects {
-			if !cb(x) {
+		for _, objectKey := range objectKeys {
+			if link, ok = objects[objectKey]; ok {
+				if !cb(link) {
+					return
+				}
+			}
+		}
+	}
+
+	return
+}
+func (mls *inMemoryLinkStorage[T, KS, KO]) GetAll(cb func(T) bool) (err error) {
+	if mls.storage != nil {
+		return
+	}
+	var objects map[KO]T
+	for _, objects = range mls.storage {
+		for _, link := range objects {
+			if !cb(link) {
 				return
 			}
 		}
 	}
 	return
+}
+
+func (mls *inMemoryLinkStorage[T, KS, KO]) GetLink(subjectKey KS, objectKey KO) (link T, err error) {
+	if mls.storage != nil {
+		return
+	}
+	var ok bool
+	var objects map[KO]T
+	if objects, ok = mls.storage[subjectKey]; ok {
+		link, _ = objects[objectKey]
+	}
+	return
+}
+func (mls *inMemoryLinkStorage[T, KS, KO]) Clear() error {
+	mls.storage = nil
+	return nil
 }

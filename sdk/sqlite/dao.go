@@ -517,7 +517,7 @@ type sqliteStorage[T any] struct {
 	queryCache    map[string]string
 }
 
-func NewSqliteStorage[T any](getConnection func() *sqlx.DB, schema ITableSchema, ownerValue interface{}) ISqliteStorage[T] {
+func newSqliteStorage[T any](getConnection func() *sqlx.DB, schema ITableSchema, ownerValue interface{}) *sqliteStorage[T] {
 	return &sqliteStorage[T]{
 		getConnection: getConnection,
 		schema:        schema,
@@ -541,11 +541,19 @@ func (ss *sqliteStorage[T]) filterColumns(columns []string) (tag string, err err
 		}
 		cols[cs.ColumnName()] = true
 	}
-	sort.Slice(columns, func(i, j int) bool {
-		return columns[i] < columns[j]
+	var filteredColumns []string
+	for k, _ := range cols {
+		filteredColumns = append(filteredColumns, k)
+	}
+	sort.Slice(filteredColumns, func(i, j int) bool {
+		return filteredColumns[i] < filteredColumns[j]
 	})
-	tag = strings.Join(columns, ",")
+	tag = strings.Join(filteredColumns, ",")
 	return
+}
+
+func (ss *sqliteStorage[T]) Schema() ITableSchema {
+	return ss.schema
 }
 
 func (ss *sqliteStorage[T]) SelectAll(cb func(T) bool) (err error) {

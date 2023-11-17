@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"github.com/keeper-security/keeper-sdk-golang/sdk/api"
 	"github.com/keeper-security/keeper-sdk-golang/sdk/auth"
-	"github.com/keeper-security/keeper-sdk-golang/sdk/internal/json_commands"
 	"github.com/keeper-security/keeper-sdk-golang/sdk/internal/proto_account_summary"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -114,15 +113,17 @@ func newTimeToKeepalive(ac auth.IAuthContext) *timeToKeepalive {
 		lastActivity:     time.Now().Unix() / 60,
 		logoutTimeoutMin: 60,
 	}
-	if ac.Settings().LogoutTimer > 0 {
+	if ac.Settings() != nil && ac.Settings().LogoutTimer > 0 {
 		result.logoutTimeoutMin = ac.Settings().LogoutTimer / (1000 * 60)
 	}
-	for _, l := range ac.Enforcements().Longs {
-		if l.Key == "logout_timer_desktop" {
-			if l.GetValue() < result.logoutTimeoutMin {
-				result.logoutTimeoutMin = l.GetValue()
+	if ac.Enforcements() != nil {
+		for _, l := range ac.Enforcements().Longs {
+			if l.Key == "logout_timer_desktop" {
+				if l.GetValue() < result.logoutTimeoutMin {
+					result.logoutTimeoutMin = l.GetValue()
+				}
+				break
 			}
-			break
 		}
 	}
 	if result.logoutTimeoutMin < 3 {
@@ -255,10 +256,10 @@ func (ka *keeperAuth) ExecuteBatch(requests []auth.IKeeperCommand) (responses []
 		if attempt > 5 {
 			break
 		}
-		var rq = &json_commands.ExecuteCommand{
+		var rq = &auth.ExecuteCommand{
 			Requests: requests[len(responses):],
 		}
-		var rs = new(json_commands.ExecuteResponse)
+		var rs = new(auth.ExecuteResponse)
 		if err = ka.ExecuteAuthCommand(rq, rs, true); err != nil {
 			return
 		}

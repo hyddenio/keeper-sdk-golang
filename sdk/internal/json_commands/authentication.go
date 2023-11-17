@@ -32,17 +32,3 @@ type SsoToken struct {
 	SessionId    string `json:"session_id"`
 	LoginToken   string `json:"login_token"`
 }
-
-type ExecuteCommand struct {
-	auth.AuthorizedCommand
-	Requests []auth.IKeeperCommand `json:"requests"`
-}
-
-func (c *ExecuteCommand) CommandName() string {
-	return "execute"
-}
-
-type ExecuteResponse struct {
-	auth.KeeperApiResponse
-	Responses []*auth.KeeperApiResponse `json:"results"`
-}

@@ -74,7 +74,7 @@ type IStorageFolder interface {
 type IStorageUserEmail interface {
 	AccountUid() string
 	Email() string
-	storage.IUidLink
+	storage.IUidLink[string, string]
 }
 
 type IStorageRecordKey interface {
@@ -85,7 +85,7 @@ type IStorageRecordKey interface {
 	CanShare() bool
 	CanEdit() bool
 	OwnerAccountUid() string
-	storage.IUidLink
+	storage.IUidLink[string, string]
 }
 
 type IStorageSharedFolderKey interface {
@@ -93,7 +93,7 @@ type IStorageSharedFolderKey interface {
 	EncryptorUid() string
 	KeyType() StorageKeyType
 	SharedFolderKey() []byte
-	storage.IUidLink
+	storage.IUidLink[string, string]
 }
 
 type SharedFolderUserType int32
@@ -110,13 +110,13 @@ type IStorageSharedFolderPermission interface {
 	ManageRecords() bool
 	ManageUsers() bool
 	Expiration() int64
-	storage.IUidLink
+	storage.IUidLink[string, string]
 }
 
 type IStorageFolderRecord interface {
 	FolderUid() string
 	RecordUid() string
-	storage.IUidLink
+	storage.IUidLink[string, string]
 }
 
 type IStorageBreachWatchRecord interface {
@@ -148,18 +148,18 @@ type IVaultStorage interface {
 	ContinuationToken() []byte
 	SetContinuationToken([]byte)
 
-	Records() storage.IEntityStorage[IStorageRecord]
-	RecordTypes() storage.IEntityStorage[IStorageRecordType]
-	SharedFolders() storage.IEntityStorage[IStorageSharedFolder]
-	Teams() storage.IEntityStorage[IStorageTeam]
-	UserEmails() storage.ILinkStorage[IStorageUserEmail]
-	NonSharedData() storage.IEntityStorage[IStorageNonSharedData]
-	RecordKeys() storage.ILinkStorage[IStorageRecordKey]
-	SharedFolderKeys() storage.ILinkStorage[IStorageSharedFolderKey]
-	SharedFolderPermissions() storage.ILinkStorage[IStorageSharedFolderPermission]
-	Folders() storage.IEntityStorage[IStorageFolder]
-	FolderRecords() storage.ILinkStorage[IStorageFolderRecord]
-	BreachWatchRecords() storage.IEntityStorage[IStorageBreachWatchRecord]
+	Records() storage.IEntityStorage[IStorageRecord, string]
+	RecordTypes() storage.IEntityStorage[IStorageRecordType, string]
+	SharedFolders() storage.IEntityStorage[IStorageSharedFolder, string]
+	Teams() storage.IEntityStorage[IStorageTeam, string]
+	UserEmails() storage.ILinkStorage[IStorageUserEmail, string, string]
+	NonSharedData() storage.IEntityStorage[IStorageNonSharedData, string]
+	RecordKeys() storage.ILinkStorage[IStorageRecordKey, string, string]
+	SharedFolderKeys() storage.ILinkStorage[IStorageSharedFolderKey, string, string]
+	SharedFolderPermissions() storage.ILinkStorage[IStorageSharedFolderPermission, string, string]
+	Folders() storage.IEntityStorage[IStorageFolder, string]
+	FolderRecords() storage.ILinkStorage[IStorageFolderRecord, string, string]
+	BreachWatchRecords() storage.IEntityStorage[IStorageBreachWatchRecord, string]
 
 	Clear()
 }

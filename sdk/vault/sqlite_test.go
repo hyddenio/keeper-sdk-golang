@@ -1,10 +1,10 @@
 package vault
 
 import (
-	"fmt"
 	"github.com/jmoiron/sqlx"
 	"github.com/keeper-security/keeper-sdk-golang/sdk/api"
 	"github.com/keeper-security/keeper-sdk-golang/sdk/sqlite"
+	"github.com/keeper-security/keeper-sdk-golang/sdk/storage"
 	_ "github.com/mattn/go-sqlite3"
 	"gotest.tools/assert"
 	"reflect"
@@ -23,25 +23,25 @@ func TestExtract(t *testing.T) {
 	ts.SetTableName("StorageRecord")
 	var queries []string
 	queries, err = sqlite.VerifyDatabase(db, []sqlite.ITableSchema{ts}, true)
+	assert.Assert(t, len(queries) > 0)
 
-	var ees = sqlite.NewSqliteStorage[IStorageRecord](func() *sqlx.DB { return db }, ts, 0)
+	var ees storage.IEntityStorage[IStorageRecord, string]
+	ees, err = sqlite.NewSqliteEntityStorage[IStorageRecord, string](func() *sqlx.DB { return db }, ts, []byte("xxx"))
+	var recordUid = api.Base64UrlEncode(api.GenerateUid())
 	var r = &RecordStorage{
-		RecordUid_:    api.GenerateUid(),
+		RecordUid_:    recordUid,
 		ClientTime_:   3232320,
 		Data_:         []byte("DATA"),
 		Extra_:        nil,
 		UData_:        nil,
 		Owner_:        false,
-		OwnerAccount_: api.GenerateUid(),
+		OwnerAccount_: api.Base64UrlEncode(api.GenerateUid()),
 		Revision_:     3453243543534,
 		Shared_:       true,
 	}
-	err = ees.Put([]IStorageRecord{r})
-	err = ees.SelectFilter([]string{"record_uid"}, [][]interface{}{{r.RecordUid()}}, func(storage IStorageRecord) bool {
-		fmt.Printf("%v", storage)
-		return true
-	})
+	err = ees.PutEntities([]IStorageRecord{r})
+	var r1 IStorageRecord
+	r1, err = ees.GetEntity(recordUid)
 	assert.NilError(t, err)
-	assert.Assert(t, len(queries) > 0)
-	assert.Assert(t, ts != nil)
+	assert.Check(t, r1 != nil)
 }

@@ -9,8 +9,10 @@ import (
 )
 
 func TestEntityStorage(t *testing.T) {
-	var recordStorage = storage.NewInMemoryEntityStorage[[]byte, IStorageRecord]()
-	var uid = api.GenerateUid()
+	var recordStorage = storage.NewInMemoryEntityStorage[IStorageRecord, string](func(record IStorageRecord) string {
+		return record.RecordUid()
+	})
+	var uid = api.Base64UrlEncode(api.GenerateUid())
 	var r = &RecordStorage{
 		RecordUid_:    uid,
 		Revision_:     1000_000_000,
@@ -21,7 +23,7 @@ func TestEntityStorage(t *testing.T) {
 		UData_:        nil,
 		Shared_:       false,
 		Owner_:        true,
-		OwnerAccount_: api.GetRandomBytes(16),
+		OwnerAccount_: api.Base64UrlEncode(api.GetRandomBytes(16)),
 	}
 
 	var err = recordStorage.PutEntities([]IStorageRecord{r})
@@ -30,6 +32,6 @@ func TestEntityStorage(t *testing.T) {
 	r1, err = recordStorage.GetEntity(uid)
 	assert.NilError(t, err)
 	assert.Assert(t, r == r1)
-	err = recordStorage.DeleteUids([][]byte{uid, uid})
+	err = recordStorage.DeleteUids([]string{uid, uid})
 	assert.NilError(t, err)
 }
