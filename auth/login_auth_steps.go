@@ -284,8 +284,14 @@ func (la *loginAuth) onRequiresAuthHash(response *proto_auth.LoginResponse) (err
 			er1 = la.executeRest("authentication/validate_auth_hash", rq, rs, nil)
 			if er1 == nil {
 				er1 = la.onLoggedIn(rs, func(encryptedDataKey []byte) ([]byte, error) {
-					var encryptionKey = api.DeriveKeyHashV2("data_key", password, salt.GetSalt(), uint32(salt.GetIterations()))
-					return api.DecryptAesV2(encryptedDataKey, encryptionKey)
+					switch rs.EncryptedDataKeyType {
+					case proto_auth.EncryptedDataKeyType_BY_ALTERNATE:
+						var encryptionKey = api.DeriveKeyHashV2("data_key", password, salt.GetSalt(), uint32(salt.GetIterations()))
+						return api.DecryptAesV2(encryptedDataKey, encryptionKey)
+					case proto_auth.EncryptedDataKeyType_BY_PASSWORD:
+						return api.DecryptEncryptionParams(encryptedDataKey, password)
+					}
+					return nil, api.NewKeeperError("master Password Login: Method is not suppoprted")
 				})
 				if er1 == nil {
 					api.GetLogger().Info("Successfully authenticated with Master Password")
